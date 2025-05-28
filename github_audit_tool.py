@@ -78,25 +78,89 @@ class GitHubAuditTool:
         
         return commits
     
-    def calculate_work_hours(self, commits: List) -> Tuple[float, datetime, datetime]:
-        """Calculate work hours based on first and last commit timestamps."""
+    def calculate_work_hours(self, commits: List) -> Tuple[float, datetime, datetime, List]:
+        """Calculate work hours based on commit patterns, detecting work blocks and gaps."""
         if not commits:
-            return 0.0, None, None
+            return 0.0, None, None, []
         
         # Sort commits by date
         sorted_commits = sorted(commits, key=lambda c: c.commit.author.date)
         
+        if len(sorted_commits) == 1:
+            # Single commit = 10 minutes of work
+            commit_time = sorted_commits[0].commit.author.date
+            return 0.17, commit_time, commit_time, [{'start': commit_time, 'end': commit_time, 'hours': 0.17, 'commits': 1}]
+        
+        # Group commits into work blocks
+        work_blocks = []
+        current_block_start = sorted_commits[0].commit.author.date
+        current_block_commits = [sorted_commits[0]]
+        
+        # Consider a gap of more than 2 hours as a break between work sessions
+        MAX_GAP_HOURS = 2
+        
+        for i in range(1, len(sorted_commits)):
+            current_commit = sorted_commits[i]
+            previous_commit = sorted_commits[i-1]
+            
+            time_gap = current_commit.commit.author.date - previous_commit.commit.author.date
+            gap_hours = time_gap.total_seconds() / 3600
+            
+            if gap_hours > MAX_GAP_HOURS:
+                # End current block and start a new one
+                block_end = previous_commit.commit.author.date
+                block_hours = self._calculate_block_hours(current_block_start, block_end, len(current_block_commits))
+                
+                work_blocks.append({
+                    'start': current_block_start,
+                    'end': block_end, 
+                    'hours': block_hours,
+                    'commits': len(current_block_commits)
+                })
+                
+                # Start new block
+                current_block_start = current_commit.commit.author.date
+                current_block_commits = [current_commit]
+            else:
+                # Continue current block
+                current_block_commits.append(current_commit)
+        
+        # Add the final block
+        block_end = sorted_commits[-1].commit.author.date
+        block_hours = self._calculate_block_hours(current_block_start, block_end, len(current_block_commits))
+        
+        work_blocks.append({
+            'start': current_block_start,
+            'end': block_end,
+            'hours': block_hours, 
+            'commits': len(current_block_commits)
+        })
+        
+        # Calculate total hours
+        total_hours = sum(block['hours'] for block in work_blocks)
         first_commit_time = sorted_commits[0].commit.author.date
         last_commit_time = sorted_commits[-1].commit.author.date
         
-        # Calculate time difference in hours
-        time_diff = last_commit_time - first_commit_time
-        hours = time_diff.total_seconds() / 3600
+        return total_hours, first_commit_time, last_commit_time, work_blocks
+    
+    def _calculate_block_hours(self, start_time: datetime, end_time: datetime, commit_count: int) -> float:
+        """Calculate hours for a single work block."""
+        if start_time == end_time:
+            # Single commit in block = 10 minutes
+            return 0.17
         
-        # Add buffer time (assume 30 minutes before first commit and after last commit)
-        hours += 1.0
+        # Calculate actual time span
+        time_diff = end_time - start_time
+        span_hours = time_diff.total_seconds() / 3600
         
-        return hours, first_commit_time, last_commit_time
+        # Add 15 minutes buffer (before first and after last commit in block)
+        buffered_hours = span_hours + 0.25
+        
+        # Minimum time per commit is 10 minutes
+        min_hours = commit_count * 0.17
+        
+        # Return the larger of the two estimates
+        return max(buffered_hours, min_hours)
     
     def get_commit_diffs(self, commits: List) -> str:
         """Get diffs for all commits."""
@@ -141,7 +205,7 @@ Format the response as a client-friendly report with:
 1. A brief summary of the day's work
 2. Key features/changes implemented
 3. Bug fixes or improvements made
-4. Any technical details that might be relevant
+4. Any technical details that might be relevant - but make sure not to be too technical. This is for a non-technical audience. Don't quote filenames or anything like that. Keep it digestible.
 
 Make it sound professional and client-appropriate, avoiding overly technical jargon where possible.
 
@@ -300,7 +364,7 @@ def hours(repository, date, author):
             return
         
         # Calculate hours
-        hours, first_commit, last_commit = audit_tool.calculate_work_hours(commits)
+        total_hours, first_commit, last_commit, work_blocks = audit_tool.calculate_work_hours(commits)
         
         # Display results
         click.echo(f"\n{Fore.GREEN}{'='*50}")
@@ -310,14 +374,37 @@ def hours(repository, date, author):
         click.echo(f"{Fore.CYAN}Total commits: {len(commits)}{Style.RESET_ALL}")
         click.echo(f"{Fore.CYAN}First commit: {first_commit.strftime('%H:%M:%S UTC')}{Style.RESET_ALL}")
         click.echo(f"{Fore.CYAN}Last commit:  {last_commit.strftime('%H:%M:%S UTC')}{Style.RESET_ALL}")
-        click.echo(f"{Fore.GREEN}Estimated hours worked: {hours:.1f} hours{Style.RESET_ALL}")
         
-        # Show commit summary
+        # Show commit summary first (limit to last 20 commits for readability)
         click.echo(f"\n{Fore.BLUE}Commit Summary:{Style.RESET_ALL}")
-        for i, commit in enumerate(commits, 1):
+        commits_to_show = commits[-20:]  # Show last 20 commits
+        start_index = len(commits) - len(commits_to_show) + 1
+        
+        if len(commits) > 20:
+            click.echo(f"  ... (showing last 20 of {len(commits)} commits)")
+        
+        for i, commit in enumerate(commits_to_show, start_index):
             timestamp = commit.commit.author.date.strftime('%H:%M')
             message = commit.commit.message.split('\n')[0][:60]
             click.echo(f"  {i:2d}. {timestamp} - {message}")
+        
+        # Show work blocks analysis
+        click.echo(f"\n{Fore.BLUE}Work Blocks Analysis ({len(work_blocks)} blocks detected):{Style.RESET_ALL}")
+        for i, block in enumerate(work_blocks, 1):
+            start_time = block['start'].strftime('%H:%M')
+            end_time = block['end'].strftime('%H:%M')
+            hours = block['hours']
+            commit_count = block['commits']
+            
+            if start_time == end_time:
+                # Single commit block
+                click.echo(f"  Block {i}: {start_time} (isolated commit - {hours:.1f} hours)")
+            else:
+                # Multi-commit block
+                click.echo(f"  Block {i}: {start_time} - {end_time} ({hours:.1f} hours, {commit_count} commits)")
+        
+        # Show total hours at the end
+        click.echo(f"\n{Fore.GREEN}📊 Total estimated hours worked: {total_hours:.1f} hours{Style.RESET_ALL}")
         
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")

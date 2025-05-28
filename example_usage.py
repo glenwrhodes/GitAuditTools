@@ -41,9 +41,14 @@ def main():
         
         if commits:
             # Calculate work hours
-            hours, first_commit, last_commit = audit_tool.calculate_work_hours(commits)
-            print(f"⏰ Estimated work hours: {hours:.1f}")
+            total_hours, first_commit, last_commit, work_blocks = audit_tool.calculate_work_hours(commits)
+            print(f"⏰ Estimated work hours: {total_hours:.1f}")
             print(f"🕘 Work period: {first_commit.strftime('%H:%M')} - {last_commit.strftime('%H:%M')}")
+            
+            # Show work blocks
+            print(f"📊 Work blocks:")
+            for block in work_blocks:
+                print(f"  {block['start'].strftime('%H:%M')} - {block['end'].strftime('%H:%M')} ({block['hours']:.1f} hours, {block['commits']} commits)")
             
             # Generate changelist
             print("🤖 Generating AI changelist...")
