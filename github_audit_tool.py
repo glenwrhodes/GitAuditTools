@@ -194,9 +194,11 @@ class GitHubAuditTool:
         
         return json.dumps(all_diffs, indent=2)
     
-    def generate_changelist_with_ai(self, diffs: str, date: datetime) -> str:
+    def generate_changelist_with_ai(self, diffs: str, date: datetime, output_format: str = 'text') -> str:
         """Generate a professional changelist using OpenAI."""
-        prompt = f"""
+        
+        # Base prompt for the changelist
+        base_prompt = f"""
 You are a professional software developer writing an end-of-day work report for a client.
 
 Based on the following Git commit data from {date.strftime('%Y-%m-%d')}, please generate a clear, professional changelist that summarizes the work completed. 
@@ -208,7 +210,19 @@ Format the response as a client-friendly report with:
 4. Any technical details that might be relevant - but make sure not to be too technical. This is for a non-technical audience. Don't quote filenames or anything like that. Keep it digestible.
 
 Make it sound professional and client-appropriate, avoiding overly technical jargon where possible.
+"""
 
+        # Add format-specific instructions
+        if output_format.lower() == 'markdown':
+            format_instruction = """
+Please format your response using Markdown syntax. You may use headers, bullet points, code blocks, emphasis, and other Markdown formatting to make the report well-structured and readable.
+"""
+        else:  # text format
+            format_instruction = """
+Please format your response as plain text only. Do NOT use any Markdown formatting, asterisks for emphasis, hash symbols for headers, or any other special formatting characters. Use only plain text with proper spacing and line breaks for structure.
+"""
+
+        full_prompt = base_prompt + format_instruction + f"""
 Git commit data:
 {diffs}
 
@@ -220,7 +234,7 @@ Please provide a well-structured report:
                 model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You are a professional software developer writing client reports."},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": full_prompt}
                 ],
                 max_tokens=5500,
                 temperature=0.3
@@ -259,7 +273,9 @@ def cli():
 @click.option('--date', '-d', help='Date to analyze (YYYY-MM-DD). Default: today')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
 @click.option('--output', '-o', help='Output file to save the changelist')
-def changelist(repository, date, author, output):
+@click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
+              default='text', help='Output format: text (plain text) or markdown. Default: text')
+def changelist(repository, date, author, output, format):
     """Generate an AI-powered changelist for a specific date."""
     
     # Validate environment
@@ -301,20 +317,20 @@ def changelist(repository, date, author, output):
         click.echo(f"{Fore.BLUE}Extracting diffs...{Style.RESET_ALL}")
         diffs = audit_tool.get_commit_diffs(commits)
         
-        # Generate AI changelist
-        click.echo(f"{Fore.BLUE}Generating AI changelist...{Style.RESET_ALL}")
-        changelist_text = audit_tool.generate_changelist_with_ai(diffs, target_date)
+        # Generate AI changelist with specified format
+        click.echo(f"{Fore.BLUE}Generating AI changelist ({format} format)...{Style.RESET_ALL}")
+        changelist_text = audit_tool.generate_changelist_with_ai(diffs, target_date, format)
         
         # Display result
         click.echo(f"\n{Fore.GREEN}{'='*60}")
-        click.echo(f"CHANGELIST FOR {target_date.strftime('%Y-%m-%d')}")
+        click.echo(f"CHANGELIST FOR {target_date.strftime('%Y-%m-%d')} ({format.upper()} FORMAT)")
         click.echo(f"{'='*60}{Style.RESET_ALL}\n")
         click.echo(changelist_text)
         
         # Save to file if requested
         if output:
             with open(output, 'w', encoding='utf-8') as f:
-                f.write(f"CHANGELIST FOR {target_date.strftime('%Y-%m-%d')}\n")
+                f.write(f"CHANGELIST FOR {target_date.strftime('%Y-%m-%d')} ({format.upper()} FORMAT)\n")
                 f.write("="*60 + "\n\n")
                 f.write(changelist_text)
             click.echo(f"\n{Fore.GREEN}Changelist saved to: {output}{Style.RESET_ALL}")
