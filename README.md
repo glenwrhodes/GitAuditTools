@@ -1,20 +1,14 @@
-# GitHub Auditing Tool
+# GitHub Audit Tool
 
-A powerful Python tool for auditing GitHub repositories that can:
-
-1. **Generate AI-powered changelists** - Create professional end-of-day work reports by feeding commit diffs to OpenAI
-2. **Calculate work hours** - Estimate hours worked based on first and last commit timestamps for any given day
-
-Perfect for developers who need to provide clients with detailed work reports or track their daily productivity.
+A powerful tool to generate changelists, calculate work hours, and analyze coding patterns from GitHub repositories.
 
 ## Features
 
-- 🤖 **AI-Generated Changelists**: Uses OpenAI GPT-4 to create professional, client-friendly work reports
-- ⏰ **Work Hours Calculation**: Automatically calculates hours worked based on commit patterns
-- 🎨 **Beautiful CLI**: Colorized output with clear formatting
-- 📁 **Export Options**: Save changelists to files for easy sharing
-- 🔍 **Flexible Filtering**: Filter by date, author, and repository
-- 🛡️ **Secure Configuration**: Environment variable-based API key management
+- **AI-Powered Changelists**: Generate professional client reports from your commits
+- **Work Hours Calculation**: Estimate time spent coding based on commit patterns with realistic pre-work assumptions
+- **Coding Rhythm Analysis**: Discover your most productive hours and days
+- **Date Range Support**: Analyze single days, weeks, months, or custom ranges
+- **Smart Token Management**: Automatically optimizes AI requests to stay within limits
 
 ## Installation
 
@@ -76,56 +70,164 @@ This will prompt you for:
 
 **Note**: You'll need credits in your OpenAI account to use the API. The tool uses GPT-4 which costs approximately $0.03 per 1K tokens.
 
-## Usage
+## Commands
 
-### Generate a Changelist
+### Generate Changelists
 
-Generate an AI-powered changelist for today:
+Create professional work reports from your commits:
 
-**Windows (using batch file):**
 ```bash
-audit.bat changelist username/repository-name
+# Today's work
+python github_audit_tool.py changelist myrepo
+
+# Specific date
+python github_audit_tool.py changelist myrepo -d 2023-12-15
+
+# Date range
+python github_audit_tool.py changelist myrepo -d "2023-12-01..2023-12-07"
+
+# This week (keywords supported)
+python github_audit_tool.py changelist myrepo -d week
+
+# Include full diffs (more detailed but uses more AI tokens)
+python github_audit_tool.py changelist myrepo -v
+
+# Markdown format
+python github_audit_tool.py changelist myrepo -f markdown -o report.md
 ```
 
-**Manual (all platforms):**
-```bash
-python github_audit_tool.py changelist username/repository-name
-```
-
-For a specific date:
-```bash
-audit.bat changelist username/repository-name --date 2024-01-15
-```
-
-Save to a file:
-```bash
-audit.bat changelist username/repository-name --date 2024-01-15 --output report.txt
-```
-
-Filter by specific author:
-```bash
-audit.bat changelist username/repository-name --author "developer@example.com"
-```
+**Supported date keywords**: `today`, `yesterday`, `week`, `this-week`, `last-week`, `month`, `this-month`, `last-month`
 
 ### Calculate Work Hours
 
-Calculate hours worked today:
-```bash
-audit.bat hours username/repository-name
-```
-
-For a specific date:
-```bash
-audit.bat hours username/repository-name --date 2024-01-15
-```
-
-### Get Help
+Estimate time spent coding based on commit patterns:
 
 ```bash
-audit.bat --help
-audit.bat changelist --help
-audit.bat hours --help
+# Today's hours
+python github_audit_tool.py hours myrepo
+
+# This week's breakdown
+python github_audit_tool.py hours myrepo -d week
+
+# Custom date range
+python github_audit_tool.py hours myrepo -d "2023-12-01..2023-12-15"
 ```
+
+**How Hours Are Calculated:**
+- **Pre-work assumption**: 30 minutes of work is assumed before your first commit (since you likely started working before committing)
+- **Work blocks**: Commits separated by more than 2 hours are treated as separate work sessions
+- **Post-work buffer**: 10 minutes added after the last commit for cleanup/testing
+- **Minimum time**: At least 10 minutes per commit to account for actual work done
+- **Display format**: Hours shown in both decimal (3.5 hours) and clock format (03:30) for easy reading
+
+*Example: A single commit at 9:00 AM = 0.7 hours (00:40) total*
+
+### Analyze Coding Rhythm
+
+Discover your productivity patterns:
+
+```bash
+# This week's patterns (default)
+python github_audit_tool.py rhythm myrepo
+
+# Last month's patterns
+python github_audit_tool.py rhythm myrepo -d last-month
+
+# Custom range
+python github_audit_tool.py rhythm myrepo -d "2023-11-01..2023-11-30"
+```
+
+The rhythm analysis shows:
+- **Hourly patterns**: When you're most active throughout the day
+- **Daily patterns**: Which days of the week you're most productive
+- **Work insights**: Productivity tips based on your patterns
+- **Visual charts**: ASCII bar charts of your coding activity
+
+## Date Range Formats
+
+The tool supports flexible date specifications:
+
+### Single Dates
+- `2023-12-15` - Specific date
+- `today` - Current date
+- `yesterday` - Previous day
+
+### Date Ranges
+- `2023-12-01..2023-12-07` - Custom range
+- `2023-12-01:2023-12-07` - Alternative syntax
+- `week` or `this-week` - Current week (Monday-Sunday)
+- `last-week` - Previous week
+- `month` or `this-month` - Current month
+- `last-month` - Previous month
+
+## Token Management
+
+The tool intelligently manages AI token usage:
+
+- **Default mode**: Uses commit messages only (lightweight, <5k tokens)
+- **Verbose mode** (`-v`): Includes full diffs (detailed but more tokens)
+- **Auto-fallback**: If full diffs exceed 100k tokens, falls back to messages
+- **Hard limit**: Errors if data exceeds 128k tokens (suggests smaller range)
+
+## Example Workflow
+
+```bash
+# 1. Analyze your week's rhythm
+python github_audit_tool.py rhythm myrepo -d week
+
+# 2. Calculate total hours worked
+python github_audit_tool.py hours myrepo -d week
+
+# 3. Generate client report
+python github_audit_tool.py changelist myrepo -d week -f markdown -o weekly_report.md
+```
+
+## Requirements
+
+- Python 3.7+
+- GitHub Personal Access Token
+- OpenAI API Key
+
+## Realistic Time Tracking
+
+The tool uses intelligent assumptions to provide more accurate work hour estimates:
+
+### Why 30 Minutes Pre-Work?
+When you make your first commit of the day, you've likely been:
+- Setting up your development environment
+- Reading documentation or issues
+- Planning your approach
+- Writing initial code before the first commit
+
+### Work Block Detection
+- **Continuous work**: Commits within 2 hours are grouped as one work session
+- **Work breaks**: Gaps longer than 2 hours indicate breaks (lunch, meetings, etc.)
+- **Multiple sessions**: Each work block gets its own 30-minute pre-work assumption
+
+### Example Time Calculations
+```
+Single commit at 9:00 AM:
+→ 30 min prep (8:30-9:00) + 10 min commit = 40 minutes total
+
+Three commits: 9:00 AM, 9:30 AM, 10:15 AM:
+→ 30 min prep + 1h 15m span + 10 min buffer = 2h 15m total
+
+Two separate sessions: 9:00 AM and 2:00 PM:
+→ Session 1: 40 min (30+10)
+→ Session 2: 40 min (30+10)
+→ Total: 1h 20m
+```
+
+This approach provides more realistic billing and productivity tracking compared to simple "first commit to last commit" calculations.
+
+## Dependencies
+
+See `requirements.txt` for the complete list. Key dependencies:
+- `PyGithub` - GitHub API integration
+- `openai` - AI-powered changelist generation
+- `tiktoken` - Token counting for AI optimization
+- `click` - Command-line interface
+- `colorama` - Colored terminal output
 
 ## Example Output
 
@@ -225,16 +327,6 @@ Make sure your GitHub token has these scopes:
 - Regularly rotate your API keys
 - Use the minimum required scopes for your GitHub token
 - Monitor your OpenAI usage to avoid unexpected charges
-
-## Dependencies
-
-- `PyGithub` - GitHub API interaction
-- `openai` - OpenAI API integration
-- `click` - Command-line interface
-- `colorama` - Cross-platform colored output
-- `python-dotenv` - Environment variable management
-- `python-dateutil` - Date parsing utilities
-- `pytz` - Timezone handling
 
 ## License
 
