@@ -449,6 +449,77 @@ Please provide a well-structured report:
         except Exception as e:
             return f"Error generating AI changelist: {e}\n\nRaw commit data:\n{data}"
 
+    def generate_timeline_with_ai(self, data: str, date_range: Tuple[datetime, datetime], output_format: str = 'text', is_full_diff: bool = True, voice: Optional[str] = None) -> str:
+        """Generate a chronological development timeline using OpenAI."""
+        
+        start_date, end_date = date_range
+        if start_date.date() == end_date.date():
+            date_str = start_date.strftime('%Y-%m-%d')
+        else:
+            date_str = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+        
+        data_type = "detailed Git commit data with diffs" if is_full_diff else "Git commit messages and metadata"
+        
+        # Base prompt for the timeline
+        base_prompt = f"""
+You are a technical project historian documenting the development timeline of a software project.
+
+Based on the following {data_type} from {date_str}, please generate a comprehensive development timeline that tells the story of how this project evolved chronologically.
+
+Create a historical narrative that includes:
+1. **Chronological Development Story** - Show the progression of work over time
+2. **Feature Evolution** - Highlight when major features and capabilities were introduced
+3. **Development Milestones** - Identify key moments and breakthroughs in the development process
+4. **Technical Progress** - Document how the codebase and architecture evolved
+5. **Work Patterns** - Note significant development phases or focus areas
+
+**IMPORTANT**: For each major development phase or feature mentioned, include the specific dates when that work occurred. This timeline should read like a project history that someone could use to understand how and when the project developed.
+
+Structure this as a narrative timeline that flows chronologically, making it clear what happened when. Focus on the evolution and progression of the project rather than just listing individual changes.
+"""
+
+        # Add voice/tone instruction if provided
+        if voice:
+            voice_instruction = f"""
+IMPORTANT: Please write this timeline with the following tone/voice: {voice}
+
+Make sure the entire timeline reflects this requested tone while maintaining chronological accuracy.
+"""
+            base_prompt += voice_instruction
+
+        # Add format-specific instructions
+        if output_format.lower() == 'markdown':
+            format_instruction = """
+Please format your response using Markdown syntax. Use headers for different time periods, bullet points for key developments, code blocks if needed, and other Markdown formatting to create a well-structured, readable timeline.
+"""
+        else:  # text format
+            format_instruction = """
+Please format your response as plain text only. Do NOT use any Markdown formatting, asterisks for emphasis, hash symbols for headers, or any other special formatting characters. Use only plain text with proper spacing and line breaks for structure.
+"""
+
+        full_prompt = base_prompt + format_instruction + f"""
+Git commit data (chronologically ordered):
+{data}
+
+Please provide a comprehensive development timeline:
+"""
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a technical project historian creating development timelines."},
+                    {"role": "user", "content": full_prompt}
+                ],
+                max_tokens=5500,
+                temperature=0.3
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            return f"Error generating AI timeline: {e}\n\nRaw commit data:\n{data}"
+
     def generate_smart_filename(self, date_input: str, start_date: datetime, end_date: datetime, 
                                report_type: str, repository_name: str, author: Optional[str] = None, 
                                authenticated_user_login: str = None, file_format: str = 'text') -> str:
@@ -835,21 +906,25 @@ def validate_environment():
 
 @click.group()
 def cli():
-    """GitHub Auditing Tool - Generate changelists and calculate work hours."""
+    """GitHub Auditing Tool - Generate changelists, calculate work hours, and create development timelines."""
     pass
 
 @cli.command()
 @click.argument('repository')
 @click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: today')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
-@click.option('--output', '-o', help='Output file to save the changelist. Use without filename to auto-generate smart filename.')
+@click.option('--output', '-o', help='Output file to save the changelist (uses auto-generated filename if not specified)')
 @click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
-              default='text', help='Output format: text (plain text) or markdown. Default: text')
+              default='markdown', help='Output format: text (plain text) or markdown. Default: markdown')
 @click.option('--verbose', '-v', is_flag=True, help='Include full diffs (may use more tokens). Default: commit messages only')
-@click.option('--save', is_flag=True, help='Save to auto-generated filename')
+@click.option('--display-only', is_flag=True, help='Display output only (do not save to file) - saves AI tokens')
 @click.option('--voice', help='Specify the tone/voice for the report (e.g., "friendly and upbeat", "formal and concise", "enthusiastic")')
-def changelist(repository, date, author, output, format, verbose, save, voice):
-    """Generate an AI-powered changelist for a specific date or date range."""
+def changelist(repository, date, author, output, format, verbose, display_only, voice):
+    """Generate an AI-powered changelist for a specific date or date range.
+    
+    By default, saves to an auto-generated markdown file to prevent wasting AI tokens.
+    Use --display-only to show output without saving.
+    """
     
     # Validate environment
     validation_result = validate_environment()
@@ -915,26 +990,30 @@ def changelist(repository, date, author, output, format, verbose, save, voice):
         click.echo(f"{Fore.BLUE}Generating AI changelist ({format} format)...{Style.RESET_ALL}")
         changelist_text = audit_tool.generate_changelist_with_ai(commit_data, (start_date, end_date), format, is_full_diff, voice)
         
-        # Display result
-        click.echo(f"\n{Fore.GREEN}{'='*60}")
-        click.echo(f"CHANGELIST FOR {date_display.upper()} ({format.upper()} FORMAT)")
-        click.echo(f"{'='*60}{Style.RESET_ALL}\n")
-        click.echo(changelist_text)
-        
-        # Save to file if requested
-        if output is not None:
+        # Save to file by default, unless display-only is specified
+        if display_only:
+            # Display output only to console
+            click.echo(f"\n{Fore.GREEN}{'='*60}")
+            click.echo(f"CHANGELIST FOR {date_display.upper()} ({format.upper()} FORMAT)")
+            click.echo(f"{'='*60}{Style.RESET_ALL}\n")
+            click.echo(changelist_text)
+        elif output is not None:
             # Custom filename provided
             report_title = f"CHANGELIST FOR {date_display.upper()} ({format.upper()} FORMAT)"
             audit_tool.save_report_to_file(changelist_text, output, report_title)
             click.echo(f"\n{Fore.GREEN}Changelist saved to: {output}{Style.RESET_ALL}")
-        elif save:
-            # Auto-generate filename when --save flag is used
+        else:
+            # Default behavior: Auto-generate filename and save
             output_filename = audit_tool.generate_smart_filename(date, start_date, end_date, 'changelist', repository, author, audit_tool.user.login, format)
             click.echo(f"{Fore.CYAN}Auto-generated filename: {output_filename}{Style.RESET_ALL}")
             
             report_title = f"CHANGELIST FOR {date_display.upper()} ({format.upper()} FORMAT)"
             audit_tool.save_report_to_file(changelist_text, output_filename, report_title)
             click.echo(f"\n{Fore.GREEN}Changelist saved to: {output_filename}{Style.RESET_ALL}")
+            
+            # Also display a brief confirmation of what was saved
+            click.echo(f"{Fore.BLUE}💡 Report saved automatically to prevent wasting AI tokens.{Style.RESET_ALL}")
+            click.echo(f"{Fore.BLUE}Use --display-only flag if you only want console output.{Style.RESET_ALL}")
         
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
@@ -1234,6 +1313,123 @@ def rhythm(repository, date, author, output, format, save):
             report_title = f"CODING RHYTHM ANALYSIS FOR {date_display.upper()} ({format.upper()} FORMAT)"
             audit_tool.save_report_to_file(report_content, output_filename, report_title)
             click.echo(f"\n{Fore.GREEN}Rhythm analysis saved to: {output_filename}{Style.RESET_ALL}")
+        
+    except Exception as e:
+        click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
+@cli.command()
+@click.argument('repository')
+@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: this week')
+@click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
+@click.option('--output', '-o', help='Output file to save the timeline (uses auto-generated filename if not specified)')
+@click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
+              default='markdown', help='Output format: text (plain text) or markdown. Default: markdown')
+@click.option('--verbose', '-v', is_flag=True, help='Include full diffs (may use more tokens). Default: commit messages only')
+@click.option('--display-only', is_flag=True, help='Display output only (do not save to file) - saves AI tokens')
+@click.option('--voice', help='Specify the tone/voice for the timeline (e.g., "narrative storytelling", "technical documentation", "executive summary")')
+def timeline(repository, date, author, output, format, verbose, display_only, voice):
+    """Generate an AI-powered development timeline showing chronological project evolution.
+    
+    By default, saves to an auto-generated markdown file to prevent wasting AI tokens.
+    Use --display-only to show output without saving.
+    """
+    
+    # Validate environment
+    validation_result = validate_environment()
+    if not validation_result:
+        sys.exit(1)
+    
+    _, github_token, openai_api_key = validation_result
+    
+    # Default to current week if no date specified
+    if not date:
+        date = 'this-week'
+    
+    try:
+        # Initialize the tool
+        audit_tool = GitHubAuditTool(github_token, openai_api_key)
+        
+        # Parse date range
+        start_date, end_date = audit_tool.parse_date_range(date)
+        
+        # Format date range for display
+        if start_date.date() == end_date.date():
+            date_display = start_date.strftime('%Y-%m-%d')
+        else:
+            date_display = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+        
+        # Get repository
+        click.echo(f"{Fore.BLUE}Analyzing repository: {repository}{Style.RESET_ALL}")
+        repo = audit_tool.get_repository(repository)
+        
+        # Get commits for the date range
+        click.echo(f"{Fore.BLUE}Getting commits for {date_display}...{Style.RESET_ALL}")
+        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author)
+        
+        if not commits:
+            click.echo(f"{Fore.YELLOW}No commits found for {date_display}{Style.RESET_ALL}")
+            return
+        
+        click.echo(f"{Fore.GREEN}Found {len(commits)} commits{Style.RESET_ALL}")
+        
+        # Sort commits chronologically (oldest first) for timeline
+        commits = sorted(commits, key=lambda c: c.commit.author.date)
+        
+        # Get commit data based on verbose flag
+        if verbose:
+            click.echo(f"{Fore.BLUE}Extracting full diffs...{Style.RESET_ALL}")
+            diffs, within_limit = audit_tool.get_commit_diffs(commits)
+            
+            if not within_limit:
+                click.echo(f"{Fore.YELLOW}Warning: Full diffs exceed token limit (>100k tokens). Falling back to commit messages only.{Style.RESET_ALL}")
+                commit_data = audit_tool.get_commit_messages_only(commits)
+                is_full_diff = False
+            else:
+                commit_data = diffs
+                is_full_diff = True
+        else:
+            click.echo(f"{Fore.BLUE}Extracting commit messages...{Style.RESET_ALL}")
+            commit_data = audit_tool.get_commit_messages_only(commits)
+            is_full_diff = False
+        
+        # Check token count
+        token_count = audit_tool.count_tokens(commit_data)
+        if token_count > 128000:  # 128k token limit
+            click.echo(f"{Fore.RED}Error: Commit data ({token_count:,} tokens) exceeds maximum limit (128k tokens).{Style.RESET_ALL}")
+            click.echo(f"{Fore.YELLOW}Try using a smaller date range or fewer commits.{Style.RESET_ALL}")
+            return
+        
+        click.echo(f"{Fore.BLUE}Using {token_count:,} tokens ({('full diffs' if is_full_diff else 'commit messages only')})...{Style.RESET_ALL}")
+        
+        # Generate AI timeline with specified format
+        click.echo(f"{Fore.BLUE}Generating AI development timeline ({format} format)...{Style.RESET_ALL}")
+        timeline_text = audit_tool.generate_timeline_with_ai(commit_data, (start_date, end_date), format, is_full_diff, voice)
+        
+        # Save to file by default, unless display-only is specified
+        if display_only:
+            # Display output only to console
+            click.echo(f"\n{Fore.GREEN}{'='*60}")
+            click.echo(f"DEVELOPMENT TIMELINE FOR {date_display.upper()} ({format.upper()} FORMAT)")
+            click.echo(f"{'='*60}{Style.RESET_ALL}\n")
+            click.echo(timeline_text)
+        elif output is not None:
+            # Custom filename provided
+            report_title = f"DEVELOPMENT TIMELINE FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(timeline_text, output, report_title)
+            click.echo(f"\n{Fore.GREEN}Timeline saved to: {output}{Style.RESET_ALL}")
+        else:
+            # Default behavior: Auto-generate filename and save
+            output_filename = audit_tool.generate_smart_filename(date, start_date, end_date, 'timeline', repository, author, audit_tool.user.login, format)
+            click.echo(f"{Fore.CYAN}Auto-generated filename: {output_filename}{Style.RESET_ALL}")
+            
+            report_title = f"DEVELOPMENT TIMELINE FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(timeline_text, output_filename, report_title)
+            click.echo(f"\n{Fore.GREEN}Timeline saved to: {output_filename}{Style.RESET_ALL}")
+            
+            # Also display a brief confirmation of what was saved
+            click.echo(f"{Fore.BLUE}💡 Report saved automatically to prevent wasting AI tokens.{Style.RESET_ALL}")
+            click.echo(f"{Fore.BLUE}Use --display-only flag if you only want console output.{Style.RESET_ALL}")
         
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")

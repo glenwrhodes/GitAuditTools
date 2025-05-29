@@ -1,10 +1,11 @@
 # GitHub Audit Tool
 
-A powerful tool to generate changelists, calculate work hours, and analyze coding patterns from GitHub repositories.
+A powerful tool to generate changelists, calculate work hours, analyze coding patterns, and create development timelines from GitHub repositories.
 
 ## Features
 
 - **AI-Powered Changelists**: Generate professional client reports from your commits
+- **Development Timeline**: Create chronological stories of project evolution with key milestones
 - **Customizable Report Voice**: Control the tone and style of your reports (friendly, formal, enthusiastic, etc.)
 - **Work Hours Calculation**: Estimate time spent coding based on commit patterns with realistic pre-work assumptions
 - **Coding Rhythm Analysis**: Discover your most productive hours and days
@@ -170,6 +171,57 @@ The rhythm analysis shows:
 - **Work insights**: Productivity tips based on your patterns
 - **Visual charts**: ASCII bar charts of your coding activity
 
+### Generate Development Timeline
+
+Create a chronological story of your project's evolution:
+
+```bash
+# This week's development timeline (default)
+python github_audit_tool.py timeline myrepo
+
+# Specific date range
+python github_audit_tool.py timeline myrepo -d "2023-12-01..2023-12-31"
+
+# Last month's development story
+python github_audit_tool.py timeline myrepo -d last-month
+
+# Entire project history timeline
+python github_audit_tool.py timeline myrepo -d all
+
+# Detailed timeline with full diffs
+python github_audit_tool.py timeline myrepo -d week -v
+
+# Markdown format with custom voice
+python github_audit_tool.py timeline myrepo -d month -f markdown --voice "narrative storytelling"
+
+# Professional project history for stakeholders
+python github_audit_tool.py timeline myrepo -d all --voice "executive summary" -f markdown -o project_timeline.md
+
+# Technical documentation style
+python github_audit_tool.py timeline myrepo -d week --voice "technical documentation" --save
+```
+
+**Timeline Voice Options**: Use the `--voice` flag to customize your timeline narrative:
+- `"narrative storytelling"` - Engaging story-like progression
+- `"technical documentation"` - Detailed technical chronicle
+- `"executive summary"` - High-level business-focused timeline
+- `"project retrospective"` - Reflective analysis of development phases
+- `"milestone tracking"` - Focus on key achievements and deadlines
+
+The timeline analysis provides:
+- **Chronological Development Story**: Shows progression of work over time
+- **Feature Evolution**: Highlights when major features were introduced
+- **Development Milestones**: Identifies key moments and breakthroughs
+- **Technical Progress**: Documents how the codebase and architecture evolved
+- **Work Patterns**: Notes significant development phases or focus areas
+
+**Perfect for**:
+- Client presentations showcasing project evolution
+- Project retrospectives and planning sessions
+- Documentation of development milestones
+- Stakeholder updates on project progress
+- Historical context for team onboarding
+
 ## Date Range Formats
 
 The tool supports flexible date specifications:
@@ -210,7 +262,10 @@ python github_audit_tool.py rhythm myrepo -d week
 # 2. Calculate total hours worked
 python github_audit_tool.py hours myrepo -d week
 
-# 3. Generate client report with appropriate tone
+# 3. Generate development timeline to understand project evolution
+python github_audit_tool.py timeline myrepo -d week -f markdown --voice "narrative storytelling"
+
+# 4. Generate client report with appropriate tone
 python github_audit_tool.py changelist myrepo -d week -f markdown --voice "professional yet friendly" -o weekly_report.md
 ```
 
@@ -228,6 +283,12 @@ python github_audit_tool.py changelist myrepo -d month --voice "technical but ac
 
 # For personal review (detailed and enthusiastic)
 python github_audit_tool.py changelist myrepo -d week --voice "enthusiastic and detailed"
+
+# For project retrospectives (development timeline)
+python github_audit_tool.py timeline myrepo -d month --voice "project retrospective" -f markdown
+
+# For stakeholder updates (high-level timeline)
+python github_audit_tool.py timeline myrepo -d "2023-01-01..2023-12-31" --voice "executive summary" -f markdown
 ```
 
 ### Project Analysis Workflow
@@ -239,8 +300,30 @@ python github_audit_tool.py rhythm myrepo -d all
 # 2. Calculate total project hours
 python github_audit_tool.py hours myrepo -d all
 
-# 3. Generate comprehensive project summary
+# 3. Generate comprehensive project timeline
+python github_audit_tool.py timeline myrepo -d all -f markdown --voice "technical documentation" -o project_history.md
+
+# 4. Generate current summary for stakeholders
 python github_audit_tool.py changelist myrepo -d all -f markdown --voice "comprehensive and professional" -o project_summary.md
+```
+
+### Client Presentation Package
+
+```bash
+# Create a complete client presentation package
+mkdir client_presentation
+
+# Executive timeline overview
+python github_audit_tool.py timeline myrepo -d month --voice "executive summary" -f markdown -o client_presentation/project_timeline.md
+
+# Detailed work breakdown
+python github_audit_tool.py changelist myrepo -d month --voice "professional and detailed" -f markdown -o client_presentation/work_completed.md
+
+# Productivity insights
+python github_audit_tool.py rhythm myrepo -d month -f markdown -o client_presentation/development_patterns.md
+
+# Total effort summary
+python github_audit_tool.py hours myrepo -d month -f markdown -o client_presentation/time_invested.md
 ```
 
 ## Requirements
@@ -351,6 +434,51 @@ Commit Summary:
    7. 16:45 - Update database migrations
    8. 17:42 - Final testing and bug fixes
 ```
+
+### Timeline Report Example
+```
+============================================================
+DEVELOPMENT TIMELINE FOR 2024-01-15 TO 2024-01-21
+============================================================
+
+## Project Evolution: Week of January 15-21, 2024
+
+### Early Week Foundation (January 15-16)
+The week began with a major security initiative focused on user authentication. On **January 15th**, development started with implementing a comprehensive password reset system, including email verification capabilities. This foundational work established the security framework that would drive the rest of the week's progress.
+
+By **January 16th**, the focus shifted to user experience improvements, with significant updates to the login page styling and responsive design fixes that would make the system more accessible across devices.
+
+### Mid-Week Feature Expansion (January 17-18)
+**January 17th** marked a pivotal moment with the introduction of advanced password strength validation, ensuring users create secure credentials. The development momentum continued into **January 18th** with the implementation of JWT refresh tokens, a critical security enhancement that improves session management and user experience.
+
+### Late Week Integration and Polish (January 19-21)
+The final phase focused on technical infrastructure and quality assurance. **January 19th** saw database migrations and optimization work, while **January 20-21** concentrated on comprehensive testing, bug fixes, and performance improvements that brought all the week's features together into a cohesive system.
+
+### Key Milestones Achieved
+- ✅ **Secure Authentication Framework** (Jan 15): Complete password reset with email verification
+- ✅ **Enhanced User Experience** (Jan 16): Modern, responsive login interface
+- ✅ **Advanced Security Features** (Jan 17-18): Password validation and JWT refresh system
+- ✅ **Production-Ready System** (Jan 19-21): Database optimization and thorough testing
+
+This week represents a significant leap forward in the application's security posture and user experience, establishing a robust foundation for future development phases.
+```
+
+**Timeline Voice Variations:**
+
+*With `--voice "technical documentation"`*:
+> **Authentication System Implementation Timeline**
+> 
+> **Phase 1 (January 15, 2024)**: Initiated password reset subsystem development. Implemented bcrypt hashing algorithms and integrated SMTP email verification protocols. Database schema modifications included new security columns and token management tables.
+
+*With `--voice "executive summary"`*:
+> **Weekly Development Summary: January 15-21, 2024**
+> 
+> This week delivered critical security enhancements that significantly improve our user authentication capabilities. The team successfully implemented a complete password reset system, modernized the user interface, and established enterprise-grade security protocols. All deliverables were completed on schedule with zero security vulnerabilities identified during testing.
+
+*With `--voice "narrative storytelling"`*:
+> **The Authentication Transformation: A Week of Innovation**
+> 
+> Picture this: a user frustrated with password issues, struggling to access their account. That's exactly the problem we set out to solve during the week of January 15th. What started as a simple password reset feature evolved into a complete authentication revolution...
 
 ## Configuration File
 
