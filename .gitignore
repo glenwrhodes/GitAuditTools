@@ -62,3 +62,5 @@ output/
 # Temporary files
 *.tmp
 *.temp 
+
+!exampleReportOfThisRepo.md
