@@ -52,6 +52,9 @@ Thumbs.db
 
 # Output files
 *.txt
+*.md
+!requirements.txt
+!README.md
 *.log
 reports/
 output/

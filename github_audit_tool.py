@@ -381,7 +381,7 @@ class GitHubAuditTool:
         # Return the data and whether it exceeds token limit
         return diff_json, token_count <= max_tokens
     
-    def generate_changelist_with_ai(self, data: str, date_range: Tuple[datetime, datetime], output_format: str = 'text', is_full_diff: bool = True) -> str:
+    def generate_changelist_with_ai(self, data: str, date_range: Tuple[datetime, datetime], output_format: str = 'text', is_full_diff: bool = True, voice: Optional[str] = None) -> str:
         """Generate a professional changelist using OpenAI."""
         
         start_date, end_date = date_range
@@ -406,6 +406,15 @@ Format the response as a client-friendly report with:
 
 Make it sound professional and client-appropriate, avoiding overly technical jargon where possible.
 """
+
+        # Add voice/tone instruction if provided
+        if voice:
+            voice_instruction = f"""
+IMPORTANT: Please write this report with the following tone/voice: {voice}
+
+Make sure the entire report reflects this requested tone.
+"""
+            base_prompt += voice_instruction
 
         # Add format-specific instructions
         if output_format.lower() == 'markdown':
@@ -440,6 +449,372 @@ Please provide a well-structured report:
         except Exception as e:
             return f"Error generating AI changelist: {e}\n\nRaw commit data:\n{data}"
 
+    def generate_smart_filename(self, date_input: str, start_date: datetime, end_date: datetime, 
+                               report_type: str, repository_name: str, author: Optional[str] = None, 
+                               authenticated_user_login: str = None, file_format: str = 'text') -> str:
+        """Generate a smart filename based on date range, report type, repo name, and format."""
+        
+        # Determine file extension based on format
+        extension = 'md' if file_format.lower() == 'markdown' else 'txt'
+        
+        # Clean repository name (replace slashes with underscores)
+        repo_part = repository_name.replace('/', '_')
+        
+        # Determine if we should include author in filename
+        # Only include if author is specified and different from authenticated user
+        author_part = ""
+        if author and author != authenticated_user_login:
+            author_part = f"_{author}"
+        
+        # Handle original date input for special cases
+        original_input = date_input.lower().strip() if date_input else None
+        
+        # Check if it's a single date or date range
+        if start_date.date() == end_date.date():
+            # Single date
+            if original_input == 'today':
+                date_part = 'today'
+            elif original_input == 'yesterday':
+                date_part = 'yesterday'
+            else:
+                date_part = start_date.strftime('%Y-%m-%d')
+        else:
+            # Date range
+            if original_input in ['all', 'alltime', 'all-time']:
+                date_part = 'alltime'
+            elif original_input in ['week', 'this-week']:
+                date_part = 'thisweek'
+            elif original_input == 'last-week':
+                date_part = 'lastweek'
+            elif original_input in ['month', 'this-month']:
+                date_part = 'thismonth'
+            elif original_input == 'last-month':
+                date_part = 'lastmonth'
+            else:
+                # Custom date range
+                start_str = start_date.strftime('%Y-%m-%d')
+                end_str = end_date.strftime('%Y-%m-%d')
+                date_part = f"{start_str}_to_{end_str}"
+        
+        return f"report_{repo_part}{author_part}_{report_type}_{date_part}.{extension}"
+    
+    def save_report_to_file(self, content: str, filename: str, report_title: str) -> None:
+        """Save report content to a file with proper formatting."""
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(f"{report_title}\n")
+            f.write("="*len(report_title) + "\n\n")
+            f.write(content)
+    
+    def format_hours_report(self, commits: List, date_display: str, 
+                           start_date: datetime, end_date: datetime, 
+                           output_format: str = 'text') -> str:
+        """Format hours analysis as a report string."""
+        
+        if not commits:
+            return "No commits found for the specified date range."
+        
+        # Calculate hours for entire range
+        total_hours, first_commit, last_commit, work_blocks = self.calculate_work_hours(commits)
+        
+        lines = []
+        
+        if start_date.date() != end_date.date():
+            # Multi-day analysis
+            # Group commits by day
+            commits_by_day = defaultdict(list)
+            for commit in commits:
+                day = commit.commit.author.date.date()
+                commits_by_day[day].append(commit)
+            
+            if output_format.lower() == 'markdown':
+                lines.append(f"## Summary")
+                lines.append(f"- **Total commits:** {len(commits)}")
+                lines.append(f"- **Date range:** {first_commit.strftime('%Y-%m-%d %H:%M UTC')} - {last_commit.strftime('%Y-%m-%d %H:%M UTC')}")
+                lines.append("")
+                lines.append("## Daily Breakdown")
+                lines.append("")
+            else:
+                lines.append(f"Total commits: {len(commits)}")
+                lines.append(f"Date range: {first_commit.strftime('%Y-%m-%d %H:%M UTC')} - {last_commit.strftime('%Y-%m-%d %H:%M UTC')}")
+                lines.append("")
+                lines.append("Daily Breakdown:")
+                
+            daily_total = 0
+            for day in sorted(commits_by_day.keys()):
+                day_commits = commits_by_day[day]
+                day_hours, _, _, _ = self.calculate_work_hours(day_commits)
+                daily_total += day_hours
+                day_name = day.strftime('%A')
+                hours_display = self._format_hours_display(day_hours)
+                
+                if output_format.lower() == 'markdown':
+                    lines.append(f"- **{day.strftime('%Y-%m-%d')} ({day_name}):** {hours_display} ({len(day_commits)} commits)")
+                else:
+                    lines.append(f"  {day.strftime('%Y-%m-%d')} ({day_name}): {hours_display} ({len(day_commits)} commits)")
+            
+            lines.append("")
+            total_hours_display = self._format_hours_display(daily_total)
+            
+            if output_format.lower() == 'markdown':
+                lines.append(f"## Total")
+                lines.append(f"**📊 Total estimated hours worked:** {total_hours_display}")
+            else:
+                lines.append(f"📊 Total estimated hours worked: {total_hours_display}")
+                
+        else:
+            # Single day analysis
+            if output_format.lower() == 'markdown':
+                lines.append(f"## Summary")
+                lines.append(f"- **Total commits:** {len(commits)}")
+                lines.append(f"- **First commit:** {first_commit.strftime('%H:%M:%S UTC')}")
+                lines.append(f"- **Last commit:** {last_commit.strftime('%H:%M:%S UTC')}")
+                lines.append("")
+                lines.append("## Commit Summary")
+                lines.append("")
+            else:
+                lines.append(f"Total commits: {len(commits)}")
+                lines.append(f"First commit: {first_commit.strftime('%H:%M:%S UTC')}")
+                lines.append(f"Last commit:  {last_commit.strftime('%H:%M:%S UTC')}")
+                lines.append("")
+                lines.append("Commit Summary:")
+            
+            # Show commit summary (limit to last 20 commits for readability)
+            commits_to_show = commits[-20:]
+            start_index = len(commits) - len(commits_to_show) + 1
+            
+            if len(commits) > 20:
+                if output_format.lower() == 'markdown':
+                    lines.append("_(showing last 20 of {} commits)_".format(len(commits)))
+                else:
+                    lines.append(f"  ... (showing last 20 of {len(commits)} commits)")
+            
+            for i, commit in enumerate(commits_to_show, start_index):
+                timestamp = commit.commit.author.date.strftime('%H:%M')
+                message = commit.commit.message.split('\n')[0][:60]
+                
+                if output_format.lower() == 'markdown':
+                    lines.append(f"{i}. **{timestamp}** - {message}")
+                else:
+                    lines.append(f"  {i:2d}. {timestamp} - {message}")
+            
+            lines.append("")
+            
+            # Work blocks analysis
+            if output_format.lower() == 'markdown':
+                lines.append(f"## Work Blocks Analysis")
+                lines.append(f"*{len(work_blocks)} blocks detected*")
+                lines.append("")
+            else:
+                lines.append(f"Work Blocks Analysis ({len(work_blocks)} blocks detected):")
+            
+            for i, block in enumerate(work_blocks, 1):
+                start_time = block['start'].strftime('%H:%M')
+                end_time = block['end'].strftime('%H:%M')
+                hours = block['hours']
+                commit_count = block['commits']
+                hours_display = self._format_hours_display(hours)
+                
+                if start_time == end_time:
+                    if output_format.lower() == 'markdown':
+                        lines.append(f"- **Block {i}:** {start_time} (isolated commit - {hours_display})")
+                    else:
+                        lines.append(f"  Block {i}: {start_time} (isolated commit - {hours_display})")
+                else:
+                    if output_format.lower() == 'markdown':
+                        lines.append(f"- **Block {i}:** {start_time} - {end_time} ({hours_display}, {commit_count} commits)")
+                    else:
+                        lines.append(f"  Block {i}: {start_time} - {end_time} ({hours_display}, {commit_count} commits)")
+            
+            lines.append("")
+            total_hours_display = self._format_hours_display(total_hours)
+            
+            if output_format.lower() == 'markdown':
+                lines.append(f"## Total")
+                lines.append(f"**📊 Total estimated hours worked:** {total_hours_display}")
+            else:
+                lines.append(f"📊 Total estimated hours worked: {total_hours_display}")
+        
+        return '\n'.join(lines)
+
+    def format_rhythm_report(self, rhythm_data: Dict, date_display: str, 
+                           output_format: str = 'text') -> str:
+        """Format rhythm analysis as a report string."""
+        
+        lines = []
+        
+        if output_format.lower() == 'markdown':
+            lines.append("## Summary")
+            lines.append(f"- **Total commits:** {rhythm_data['total_commits']}")
+            lines.append(f"- **Active days:** {rhythm_data['total_days']}")
+            lines.append(f"- **Avg commits/day:** {rhythm_data['avg_commits_per_day']:.1f}")
+            
+            if rhythm_data['date_range']:
+                start_date_analysis, end_date_analysis = rhythm_data['date_range']
+                lines.append(f"- **Analysis period:** {start_date_analysis} to {end_date_analysis}")
+            
+            lines.append("")
+            
+            # Peak times
+            peak_hour, peak_commits = rhythm_data['peak_hour']
+            peak_day, peak_day_commits = rhythm_data['peak_day']
+            lines.append("## Peak Activity")
+            lines.append(f"- **Most productive hour:** {peak_hour:02d}:00 ({peak_commits} commits)")
+            lines.append(f"- **Most productive day:** {peak_day} ({peak_day_commits} commits)")
+            lines.append(f"- **Work span:** {rhythm_data['earliest_hour']:02d}:00 - {rhythm_data['latest_hour']:02d}:00 ({rhythm_data['work_span_hours']} hours)")
+            lines.append("")
+            
+            # Hourly breakdown
+            lines.append("## Hourly Commit Pattern")
+            lines.append("")
+            hourly_commits = rhythm_data['hourly_commits']
+            max_hourly = max(hourly_commits.values()) if hourly_commits else 1
+            
+            for hour in range(24):
+                count = hourly_commits.get(hour, 0)
+                if count > 0:
+                    bar_length = int((count / max_hourly) * 20)
+                    bar = '█' * bar_length
+                    lines.append(f"- **{hour:02d}:00** | {bar} | {count} commits")
+            
+            lines.append("")
+            
+            # Daily breakdown
+            lines.append("## Weekly Commit Pattern")
+            lines.append("")
+            daily_commits = rhythm_data['daily_commits']
+            daily_hours = rhythm_data['daily_hours']
+            
+            days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            max_daily = max(daily_commits.values()) if daily_commits else 1
+            
+            for day in days_order:
+                commits_count = daily_commits.get(day, 0)
+                hours_count = daily_hours.get(day, 0)
+                if commits_count > 0:
+                    bar_length = int((commits_count / max_daily) * 15)
+                    bar = '█' * bar_length
+                    hours_display = self._format_hours_display(hours_count)
+                    lines.append(f"- **{day}** | {bar} | {commits_count} commits ({hours_display})")
+                else:
+                    lines.append(f"- **{day}** | | 0 commits")
+            
+            lines.append("")
+            lines.append("## Insights")
+            
+        else:
+            # Text format
+            lines.append("📊 Summary:")
+            lines.append(f"  Total commits: {rhythm_data['total_commits']}")
+            lines.append(f"  Active days: {rhythm_data['total_days']}")
+            lines.append(f"  Avg commits/day: {rhythm_data['avg_commits_per_day']:.1f}")
+            
+            if rhythm_data['date_range']:
+                start_date_analysis, end_date_analysis = rhythm_data['date_range']
+                lines.append(f"  Analysis period: {start_date_analysis} to {end_date_analysis}")
+            
+            lines.append("")
+            
+            # Peak times
+            peak_hour, peak_commits = rhythm_data['peak_hour']
+            peak_day, peak_day_commits = rhythm_data['peak_day']
+            lines.append("🚀 Peak Activity:")
+            lines.append(f"  Most productive hour: {peak_hour:02d}:00 ({peak_commits} commits)")
+            lines.append(f"  Most productive day: {peak_day} ({peak_day_commits} commits)")
+            lines.append(f"  Work span: {rhythm_data['earliest_hour']:02d}:00 - {rhythm_data['latest_hour']:02d}:00 ({rhythm_data['work_span_hours']} hours)")
+            lines.append("")
+            
+            # Hourly breakdown
+            lines.append("⏰ Hourly Commit Pattern:")
+            hourly_commits = rhythm_data['hourly_commits']
+            max_hourly = max(hourly_commits.values()) if hourly_commits else 1
+            
+            for hour in range(24):
+                count = hourly_commits.get(hour, 0)
+                if count > 0:
+                    bar_length = int((count / max_hourly) * 20)
+                    bar = '█' * bar_length
+                    lines.append(f"  {hour:02d}:00 │{bar:<20}│ {count} commits")
+            
+            lines.append("")
+            
+            # Daily breakdown
+            lines.append("📅 Weekly Commit Pattern:")
+            daily_commits = rhythm_data['daily_commits']
+            daily_hours = rhythm_data['daily_hours']
+            
+            days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            max_daily = max(daily_commits.values()) if daily_commits else 1
+            
+            for day in days_order:
+                commits_count = daily_commits.get(day, 0)
+                hours_count = daily_hours.get(day, 0)
+                if commits_count > 0:
+                    bar_length = int((commits_count / max_daily) * 15)
+                    bar = '█' * bar_length
+                    hours_display = self._format_hours_display(hours_count)
+                    lines.append(f"  {day:<9} │{bar:<15}│ {commits_count} commits ({hours_display})")
+                else:
+                    lines.append(f"  {day:<9} │{'':<15}│ 0 commits")
+            
+            lines.append("")
+            lines.append("💡 Insights:")
+        
+        # Generate insights (same for both formats)
+        hourly_commits = rhythm_data['hourly_commits']
+        daily_commits = rhythm_data['daily_commits']
+        
+        # Find most productive time blocks
+        if hourly_commits:
+            max_hourly = max(hourly_commits.values())
+            productive_hours = [h for h, c in hourly_commits.items() if c >= max_hourly * 0.7]
+            if productive_hours:
+                if len(productive_hours) == 1:
+                    insight = f"You're most focused around {productive_hours[0]:02d}:00"
+                else:
+                    start_hour = min(productive_hours)
+                    end_hour = max(productive_hours)
+                    insight = f"Your peak productivity window is {start_hour:02d}:00-{end_hour:02d}:00"
+                
+                if output_format.lower() == 'markdown':
+                    lines.append(f"- {insight}")
+                else:
+                    lines.append(f"  • {insight}")
+        
+        # Analyze work pattern
+        work_span = rhythm_data['work_span_hours']
+        if work_span <= 4:
+            pattern_insight = "You have a focused work pattern (4-hour span)"
+        elif work_span <= 8:
+            pattern_insight = "You maintain steady productivity throughout the day"
+        else:
+            pattern_insight = "You code across long hours - consider work-life balance"
+        
+        if output_format.lower() == 'markdown':
+            lines.append(f"- {pattern_insight}")
+        else:
+            lines.append(f"  • {pattern_insight}")
+        
+        # Weekly pattern insights
+        weekday_commits = sum(daily_commits.get(day, 0) for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])
+        weekend_commits = sum(daily_commits.get(day, 0) for day in ['Saturday', 'Sunday'])
+        
+        if weekend_commits > weekday_commits * 0.3:
+            weekend_insight = f"High weekend activity detected - {weekend_commits} weekend commits"
+            if output_format.lower() == 'markdown':
+                lines.append(f"- {weekend_insight}")
+            else:
+                lines.append(f"  • {weekend_insight}")
+        
+        max_daily = max(daily_commits.values()) if daily_commits else 0
+        if daily_commits.get('Monday', 0) > max_daily * 0.8:
+            monday_insight = "Strong Monday momentum - you start weeks well!"
+            if output_format.lower() == 'markdown':
+                lines.append(f"- {monday_insight}")
+            else:
+                lines.append(f"  • {monday_insight}")
+        
+        return '\n'.join(lines)
+
 def validate_environment():
     """Validate that required environment variables are set."""
     github_token = os.getenv('GITHUB_TOKEN')
@@ -467,11 +842,13 @@ def cli():
 @click.argument('repository')
 @click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: today')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
-@click.option('--output', '-o', help='Output file to save the changelist')
+@click.option('--output', '-o', help='Output file to save the changelist. Use without filename to auto-generate smart filename.')
 @click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
               default='text', help='Output format: text (plain text) or markdown. Default: text')
 @click.option('--verbose', '-v', is_flag=True, help='Include full diffs (may use more tokens). Default: commit messages only')
-def changelist(repository, date, author, output, format, verbose):
+@click.option('--save', is_flag=True, help='Save to auto-generated filename')
+@click.option('--voice', help='Specify the tone/voice for the report (e.g., "friendly and upbeat", "formal and concise", "enthusiastic")')
+def changelist(repository, date, author, output, format, verbose, save, voice):
     """Generate an AI-powered changelist for a specific date or date range."""
     
     # Validate environment
@@ -536,7 +913,7 @@ def changelist(repository, date, author, output, format, verbose):
         
         # Generate AI changelist with specified format
         click.echo(f"{Fore.BLUE}Generating AI changelist ({format} format)...{Style.RESET_ALL}")
-        changelist_text = audit_tool.generate_changelist_with_ai(commit_data, (start_date, end_date), format, is_full_diff)
+        changelist_text = audit_tool.generate_changelist_with_ai(commit_data, (start_date, end_date), format, is_full_diff, voice)
         
         # Display result
         click.echo(f"\n{Fore.GREEN}{'='*60}")
@@ -545,12 +922,19 @@ def changelist(repository, date, author, output, format, verbose):
         click.echo(changelist_text)
         
         # Save to file if requested
-        if output:
-            with open(output, 'w', encoding='utf-8') as f:
-                f.write(f"CHANGELIST FOR {date_display.upper()} ({format.upper()} FORMAT)\n")
-                f.write("="*60 + "\n\n")
-                f.write(changelist_text)
+        if output is not None:
+            # Custom filename provided
+            report_title = f"CHANGELIST FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(changelist_text, output, report_title)
             click.echo(f"\n{Fore.GREEN}Changelist saved to: {output}{Style.RESET_ALL}")
+        elif save:
+            # Auto-generate filename when --save flag is used
+            output_filename = audit_tool.generate_smart_filename(date, start_date, end_date, 'changelist', repository, author, audit_tool.user.login, format)
+            click.echo(f"{Fore.CYAN}Auto-generated filename: {output_filename}{Style.RESET_ALL}")
+            
+            report_title = f"CHANGELIST FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(changelist_text, output_filename, report_title)
+            click.echo(f"\n{Fore.GREEN}Changelist saved to: {output_filename}{Style.RESET_ALL}")
         
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
@@ -560,7 +944,11 @@ def changelist(repository, date, author, output, format, verbose):
 @click.argument('repository')
 @click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: today')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
-def hours(repository, date, author):
+@click.option('--output', '-o', help='Output file to save the hours report (auto-generates smart filename if not specified)')
+@click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
+              default='text', help='Output format: text (plain text) or markdown. Default: text')
+@click.option('--save', is_flag=True, help='Save to auto-generated filename')
+def hours(repository, date, author, output, format, save):
     """Calculate work hours for a specific date or date range."""
     
     # Validate environment
@@ -670,6 +1058,23 @@ def hours(repository, date, author):
             total_hours_display = audit_tool._format_hours_display(total_hours)
             click.echo(f"\n{Fore.GREEN}📊 Total estimated hours worked: {total_hours_display}{Style.RESET_ALL}")
         
+        # Save to file if requested
+        if output is not None:
+            # Custom filename provided
+            report_content = audit_tool.format_hours_report(commits, date_display, start_date, end_date, format)
+            report_title = f"WORK HOURS FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(report_content, output, report_title)
+            click.echo(f"\n{Fore.GREEN}Hours report saved to: {output}{Style.RESET_ALL}")
+        elif save:
+            # Auto-generate filename when --save flag is used
+            output_filename = audit_tool.generate_smart_filename(date, start_date, end_date, 'hours', repository, author, audit_tool.user.login, format)
+            click.echo(f"{Fore.CYAN}Auto-generated filename: {output_filename}{Style.RESET_ALL}")
+            
+            report_content = audit_tool.format_hours_report(commits, date_display, start_date, end_date, format)
+            report_title = f"WORK HOURS FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(report_content, output_filename, report_title)
+            click.echo(f"\n{Fore.GREEN}Hours report saved to: {output_filename}{Style.RESET_ALL}")
+        
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
@@ -678,7 +1083,11 @@ def hours(repository, date, author):
 @click.argument('repository')
 @click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: this week')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
-def rhythm(repository, date, author):
+@click.option('--output', '-o', help='Output file to save the rhythm analysis (auto-generates smart filename if not specified)')
+@click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
+              default='text', help='Output format: text (plain text) or markdown. Default: text')
+@click.option('--save', is_flag=True, help='Save to auto-generated filename')
+def rhythm(repository, date, author, output, format, save):
     """Analyze coding rhythm and patterns for a date range."""
     
     # Validate environment
@@ -808,6 +1217,23 @@ def rhythm(repository, date, author):
         
         if daily_commits.get('Monday', 0) > max_daily * 0.8:
             click.echo(f"  • Strong Monday momentum - you start weeks well!")
+        
+        # Save to file if requested
+        if output is not None:
+            # Custom filename provided
+            report_content = audit_tool.format_rhythm_report(rhythm_data, date_display, format)
+            report_title = f"CODING RHYTHM ANALYSIS FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(report_content, output, report_title)
+            click.echo(f"\n{Fore.GREEN}Rhythm analysis saved to: {output}{Style.RESET_ALL}")
+        elif save:
+            # Auto-generate filename when --save flag is used
+            output_filename = audit_tool.generate_smart_filename(date, start_date, end_date, 'rhythm', repository, author, audit_tool.user.login, format)
+            click.echo(f"{Fore.CYAN}Auto-generated filename: {output_filename}{Style.RESET_ALL}")
+            
+            report_content = audit_tool.format_rhythm_report(rhythm_data, date_display, format)
+            report_title = f"CODING RHYTHM ANALYSIS FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(report_content, output_filename, report_title)
+            click.echo(f"\n{Fore.GREEN}Rhythm analysis saved to: {output_filename}{Style.RESET_ALL}")
         
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")

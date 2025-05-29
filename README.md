@@ -5,6 +5,7 @@ A powerful tool to generate changelists, calculate work hours, and analyze codin
 ## Features
 
 - **AI-Powered Changelists**: Generate professional client reports from your commits
+- **Customizable Report Voice**: Control the tone and style of your reports (friendly, formal, enthusiastic, etc.)
 - **Work Hours Calculation**: Estimate time spent coding based on commit patterns with realistic pre-work assumptions
 - **Coding Rhythm Analysis**: Discover your most productive hours and days
 - **Date Range Support**: Analyze single days, weeks, months, or custom ranges
@@ -95,9 +96,26 @@ python github_audit_tool.py changelist myrepo -v
 # Markdown format
 python github_audit_tool.py changelist myrepo -f markdown -o report.md
 
+# Customize report tone/voice
+python github_audit_tool.py changelist myrepo --voice "friendly and upbeat"
+python github_audit_tool.py changelist myrepo --voice "formal and concise"
+python github_audit_tool.py changelist myrepo --voice "enthusiastic and detailed"
+python github_audit_tool.py changelist myrepo --voice "technical but accessible to non-developers"
+
+# Combine voice with other options
+python github_audit_tool.py changelist myrepo -d week -f markdown --voice "professional yet conversational" -o weekly_report.md
+
 # Entire repository history
 python github_audit_tool.py changelist myrepo -d all
 ```
+
+**Voice Options**: Use the `--voice` flag to customize how your reports sound:
+- `"friendly and upbeat"` - Positive, engaging tone
+- `"formal and concise"` - Professional, to-the-point style
+- `"enthusiastic and detailed"` - Excited, comprehensive reporting
+- `"technical but accessible"` - Detailed but understandable for non-developers
+- `"casual and conversational"` - Relaxed, informal tone
+- `"confident and results-focused"` - Emphasizes achievements and outcomes
 
 **Supported date keywords**: `today`, `yesterday`, `week`, `this-week`, `last-week`, `month`, `this-month`, `last-month`, `all`, `alltime`
 
@@ -192,8 +210,24 @@ python github_audit_tool.py rhythm myrepo -d week
 # 2. Calculate total hours worked
 python github_audit_tool.py hours myrepo -d week
 
-# 3. Generate client report
-python github_audit_tool.py changelist myrepo -d week -f markdown -o weekly_report.md
+# 3. Generate client report with appropriate tone
+python github_audit_tool.py changelist myrepo -d week -f markdown --voice "professional yet friendly" -o weekly_report.md
+```
+
+### Different Report Scenarios
+
+```bash
+# For client presentations (professional tone)
+python github_audit_tool.py changelist myrepo -d week --voice "formal and results-focused" -f markdown
+
+# For team standups (casual tone)
+python github_audit_tool.py changelist myrepo -d today --voice "casual and conversational"
+
+# For project managers (accessible technical details)
+python github_audit_tool.py changelist myrepo -d month --voice "technical but accessible" -f markdown
+
+# For personal review (detailed and enthusiastic)
+python github_audit_tool.py changelist myrepo -d week --voice "enthusiastic and detailed"
 ```
 
 ### Project Analysis Workflow
@@ -206,7 +240,7 @@ python github_audit_tool.py rhythm myrepo -d all
 python github_audit_tool.py hours myrepo -d all
 
 # 3. Generate comprehensive project summary
-python github_audit_tool.py changelist myrepo -d all -f markdown -o project_summary.md
+python github_audit_tool.py changelist myrepo -d all -f markdown --voice "comprehensive and professional" -o project_summary.md
 ```
 
 ## Requirements
@@ -284,6 +318,17 @@ Today's development focused on enhancing the user authentication system and impr
 - Implemented JWT token refresh mechanism
 - Updated database migrations for new user fields
 ```
+
+**Voice Customization Examples:**
+
+*With `--voice "friendly and upbeat"`*:
+> "🎉 What an amazing day of coding! We made fantastic progress on the user authentication system and the results are looking awesome! The new password reset feature is working beautifully..."
+
+*With `--voice "formal and concise"`*:
+> "This report summarizes the development activities completed on January 15, 2024. Primary objectives included authentication system enhancements and user interface improvements..."
+
+*With `--voice "technical but accessible"`*:
+> "Today's work centered around strengthening our user security infrastructure. We implemented several key improvements that will make the login experience both more secure and user-friendly..."
 
 ### Hours Report Example
 ```
