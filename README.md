@@ -94,9 +94,12 @@ python github_audit_tool.py changelist myrepo -v
 
 # Markdown format
 python github_audit_tool.py changelist myrepo -f markdown -o report.md
+
+# Entire repository history
+python github_audit_tool.py changelist myrepo -d all
 ```
 
-**Supported date keywords**: `today`, `yesterday`, `week`, `this-week`, `last-week`, `month`, `this-month`, `last-month`
+**Supported date keywords**: `today`, `yesterday`, `week`, `this-week`, `last-week`, `month`, `this-month`, `last-month`, `all`, `alltime`
 
 ### Calculate Work Hours
 
@@ -111,6 +114,9 @@ python github_audit_tool.py hours myrepo -d week
 
 # Custom date range
 python github_audit_tool.py hours myrepo -d "2023-12-01..2023-12-15"
+
+# Total hours for entire project history
+python github_audit_tool.py hours myrepo -d all
 ```
 
 **How Hours Are Calculated:**
@@ -135,6 +141,9 @@ python github_audit_tool.py rhythm myrepo -d last-month
 
 # Custom range
 python github_audit_tool.py rhythm myrepo -d "2023-11-01..2023-11-30"
+
+# Lifetime coding patterns
+python github_audit_tool.py rhythm myrepo -d all
 ```
 
 The rhythm analysis shows:
@@ -159,6 +168,11 @@ The tool supports flexible date specifications:
 - `last-week` - Previous week
 - `month` or `this-month` - Current month
 - `last-month` - Previous month
+- `all` or `alltime` - Entire repository history (all commits ever made)
+
+**Supported date keywords**: `today`, `yesterday`, `week`, `this-week`, `last-week`, `month`, `this-month`, `last-month`, `all`, `alltime`
+
+**⚠️ Performance Note**: Using `all` with large repositories (thousands of commits) may take longer to process and could hit API rate limits. Consider using specific date ranges for large projects.
 
 ## Token Management
 
@@ -180,6 +194,19 @@ python github_audit_tool.py hours myrepo -d week
 
 # 3. Generate client report
 python github_audit_tool.py changelist myrepo -d week -f markdown -o weekly_report.md
+```
+
+### Project Analysis Workflow
+
+```bash
+# 1. Get lifetime coding patterns for the entire project
+python github_audit_tool.py rhythm myrepo -d all
+
+# 2. Calculate total project hours
+python github_audit_tool.py hours myrepo -d all
+
+# 3. Generate comprehensive project summary
+python github_audit_tool.py changelist myrepo -d all -f markdown -o project_summary.md
 ```
 
 ## Requirements

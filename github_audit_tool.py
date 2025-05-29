@@ -101,6 +101,11 @@ class GitHubAuditTool:
                 else:
                     start_date = today.replace(month=today.month - 1, day=1)
                     end_date = today.replace(day=1) - timedelta(days=1)
+            elif date_input in ['all', 'alltime', 'all-time']:
+                # Entire repository history - use a very wide date range
+                # Start from early Git era and go to future to capture everything
+                start_date = datetime(2005, 1, 1)  # Git was created in 2005
+                end_date = today + timedelta(days=1)  # Through today
             else:
                 # Regular date parsing
                 start_date = parser.parse(date_input)
@@ -460,7 +465,7 @@ def cli():
 
 @cli.command()
 @click.argument('repository')
-@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, etc.). Default: today')
+@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: today')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
 @click.option('--output', '-o', help='Output file to save the changelist')
 @click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
@@ -553,7 +558,7 @@ def changelist(repository, date, author, output, format, verbose):
 
 @cli.command()
 @click.argument('repository')
-@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, etc.). Default: today')
+@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: today')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
 def hours(repository, date, author):
     """Calculate work hours for a specific date or date range."""
@@ -671,7 +676,7 @@ def hours(repository, date, author):
 
 @cli.command()
 @click.argument('repository')
-@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, etc.). Default: this week')
+@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: this week')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
 def rhythm(repository, date, author):
     """Analyze coding rhythm and patterns for a date range."""
