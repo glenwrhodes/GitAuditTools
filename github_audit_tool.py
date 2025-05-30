@@ -430,6 +430,8 @@ Please format your response as plain text only. Do NOT use any Markdown formatti
 Git commit data:
 {data}
 
+After the main report, provide a one paragraph summary of the work completed for the user's timesheet.
+
 Please provide a well-structured report:
 """
 
