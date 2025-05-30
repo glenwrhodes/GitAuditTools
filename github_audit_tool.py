@@ -888,6 +888,484 @@ Please provide a comprehensive development timeline:
         
         return '\n'.join(lines)
 
+    def analyze_repository_stats(self, repo, commits: List, start_date: datetime, end_date: datetime) -> Dict:
+        """Analyze comprehensive repository statistics."""
+        if not commits:
+            return {}
+        
+        # Basic stats
+        total_commits = len(commits)
+        sorted_commits = sorted(commits, key=lambda c: c.commit.author.date)
+        first_commit = sorted_commits[0]
+        last_commit = sorted_commits[-1]
+        
+        # Get repository creation date
+        try:
+            repo_created = repo.created_at
+        except Exception:
+            repo_created = None
+        
+        # Calculate repository age
+        repo_age_days = None
+        if repo_created:
+            repo_age_days = (datetime.now(pytz.UTC) - repo_created).days
+        
+        # Analyze commit patterns
+        rhythm_data = self.analyze_coding_rhythm(commits)
+        
+        # Calculate work hours
+        total_hours, _, _, work_blocks = self.calculate_work_hours(commits)
+        
+        # File change statistics
+        total_files_changed = 0
+        total_additions = 0
+        total_deletions = 0
+        file_types = defaultdict(int)
+        
+        for commit in commits:
+            if hasattr(commit, 'files'):
+                total_files_changed += len(commit.files)
+                for file in commit.files:
+                    total_additions += file.additions or 0
+                    total_deletions += file.deletions or 0
+                    
+                    # Analyze file types
+                    if '.' in file.filename:
+                        ext = file.filename.split('.')[-1].lower()
+                        file_types[ext] += 1
+        
+        # Commit message analysis
+        commit_messages = [commit.commit.message for commit in commits]
+        avg_message_length = sum(len(msg) for msg in commit_messages) / len(commit_messages) if commit_messages else 0
+        
+        # Find longest and shortest messages
+        longest_message = max(commit_messages, key=len) if commit_messages else ""
+        shortest_message = min(commit_messages, key=len) if commit_messages else ""
+        
+        # Commit timing analysis
+        commits_by_date = defaultdict(list)
+        for commit in commits:
+            date = commit.commit.author.date.date()
+            commits_by_date[date].append(commit)
+        
+        # Find busiest day
+        busiest_date = max(commits_by_date.items(), key=lambda x: len(x[1])) if commits_by_date else (None, [])
+        
+        # Calculate streaks
+        consecutive_days = self._calculate_commit_streaks(commits_by_date)
+        
+        # Weekly/monthly analysis
+        weekly_stats = self._analyze_weekly_patterns(commits)
+        monthly_stats = self._analyze_monthly_patterns(commits)
+        
+        # Unique authors in the dataset
+        unique_authors = set()
+        for commit in commits:
+            unique_authors.add(commit.commit.author.name)
+        
+        # Time span analysis
+        analysis_span_days = (end_date - start_date).days + 1
+        active_days = len(commits_by_date)
+        activity_percentage = (active_days / analysis_span_days * 100) if analysis_span_days > 0 else 0
+        
+        return {
+            # Basic repository info
+            'repo_name': repo.full_name,
+            'repo_description': repo.description,
+            'repo_created': repo_created,
+            'repo_age_days': repo_age_days,
+            'repo_language': repo.language,
+            'repo_stars': repo.stargazers_count,
+            'repo_forks': repo.forks_count,
+            
+            # Commit statistics
+            'total_commits': total_commits,
+            'first_commit': first_commit,
+            'last_commit': last_commit,
+            'unique_authors': len(unique_authors),
+            'author_list': list(unique_authors),
+            
+            # Time analysis
+            'analysis_period': (start_date, end_date),
+            'analysis_span_days': analysis_span_days,
+            'active_days': active_days,
+            'activity_percentage': activity_percentage,
+            'avg_commits_per_day': total_commits / analysis_span_days if analysis_span_days > 0 else 0,
+            'avg_commits_per_active_day': total_commits / active_days if active_days > 0 else 0,
+            
+            # Peak activity
+            'busiest_date': busiest_date[0],
+            'busiest_date_commits': len(busiest_date[1]),
+            'consecutive_days': consecutive_days,
+            
+            # Work patterns (from rhythm analysis)
+            'rhythm_data': rhythm_data,
+            'total_work_hours': total_hours,
+            'work_blocks_count': len(work_blocks),
+            
+            # File changes
+            'total_files_changed': total_files_changed,
+            'total_additions': total_additions,
+            'total_deletions': total_deletions,
+            'net_lines': total_additions - total_deletions,
+            'file_types': dict(file_types),
+            
+            # Commit messages
+            'avg_message_length': avg_message_length,
+            'longest_message': longest_message,
+            'shortest_message': shortest_message,
+            
+            # Weekly and monthly patterns
+            'weekly_stats': weekly_stats,
+            'monthly_stats': monthly_stats,
+        }
+    
+    def _calculate_commit_streaks(self, commits_by_date: Dict) -> Dict:
+        """Calculate consecutive day streaks."""
+        if not commits_by_date:
+            return {'longest_streak': 0, 'current_streak': 0}
+        
+        dates = sorted(commits_by_date.keys())
+        longest_streak = 1
+        current_streak = 1
+        
+        for i in range(1, len(dates)):
+            if (dates[i] - dates[i-1]).days == 1:
+                current_streak += 1
+                longest_streak = max(longest_streak, current_streak)
+            else:
+                current_streak = 1
+        
+        # Check if current streak is ongoing (last commit was recent)
+        today = datetime.now().date()
+        if dates and (today - dates[-1]).days > 1:
+            current_streak = 0
+        
+        return {
+            'longest_streak': longest_streak,
+            'current_streak': current_streak
+        }
+    
+    def _analyze_weekly_patterns(self, commits: List) -> Dict:
+        """Analyze weekly commit patterns."""
+        weekly_commits = defaultdict(list)
+        
+        for commit in commits:
+            # Get week start (Monday)
+            commit_date = commit.commit.author.date.date()
+            days_since_monday = commit_date.weekday()
+            week_start = commit_date - timedelta(days=days_since_monday)
+            weekly_commits[week_start].append(commit)
+        
+        if not weekly_commits:
+            return {}
+        
+        # Find most productive week
+        most_productive_week = max(weekly_commits.items(), key=lambda x: len(x[1]))
+        
+        return {
+            'total_weeks': len(weekly_commits),
+            'avg_commits_per_week': sum(len(commits) for commits in weekly_commits.values()) / len(weekly_commits),
+            'most_productive_week': most_productive_week[0],
+            'most_productive_week_commits': len(most_productive_week[1])
+        }
+    
+    def _analyze_monthly_patterns(self, commits: List) -> Dict:
+        """Analyze monthly commit patterns."""
+        monthly_commits = defaultdict(list)
+        
+        for commit in commits:
+            commit_date = commit.commit.author.date.date()
+            month_key = (commit_date.year, commit_date.month)
+            monthly_commits[month_key].append(commit)
+        
+        if not monthly_commits:
+            return {}
+        
+        # Find most productive month
+        most_productive_month = max(monthly_commits.items(), key=lambda x: len(x[1]))
+        
+        return {
+            'total_months': len(monthly_commits),
+            'avg_commits_per_month': sum(len(commits) for commits in monthly_commits.values()) / len(monthly_commits),
+            'most_productive_month': most_productive_month[0],
+            'most_productive_month_commits': len(most_productive_month[1])
+        }
+    
+    def format_stats_report(self, stats: Dict, date_display: str, output_format: str = 'text') -> str:
+        """Format comprehensive statistics as a report string."""
+        if not stats:
+            return "No statistics available - no commits found for the specified period."
+        
+        lines = []
+        
+        if output_format.lower() == 'markdown':
+            # Markdown format
+            lines.append("# 📊 Repository Statistics Dashboard")
+            lines.append("")
+            
+            # Repository Overview
+            lines.append("## 🏠 Repository Overview")
+            lines.append(f"- **Name:** {stats['repo_name']}")
+            if stats.get('repo_description'):
+                lines.append(f"- **Description:** {stats['repo_description']}")
+            if stats.get('repo_language'):
+                lines.append(f"- **Primary Language:** {stats['repo_language']}")
+            lines.append(f"- **⭐ Stars:** {stats.get('repo_stars', 0):,}")
+            lines.append(f"- **🔀 Forks:** {stats.get('repo_forks', 0):,}")
+            
+            if stats.get('repo_created'):
+                repo_age = f" ({stats['repo_age_days']:,} days old)" if stats.get('repo_age_days') else ""
+                lines.append(f"- **🎂 Created:** {stats['repo_created'].strftime('%Y-%m-%d')}{repo_age}")
+            
+            lines.append("")
+            
+            # Analysis Period Summary
+            lines.append("## 📅 Analysis Period")
+            start_date, end_date = stats['analysis_period']
+            lines.append(f"- **Period:** {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+            lines.append(f"- **Duration:** {stats['analysis_span_days']} days")
+            lines.append(f"- **Active Days:** {stats['active_days']} days ({stats['activity_percentage']:.1f}% of period)")
+            lines.append("")
+            
+            # Commit Statistics
+            lines.append("## 📈 Commit Statistics")
+            lines.append(f"- **Total Commits:** {stats['total_commits']:,}")
+            lines.append(f"- **Contributors:** {stats['unique_authors']}")
+            if len(stats['author_list']) <= 5:
+                lines.append(f"- **Authors:** {', '.join(stats['author_list'])}")
+            lines.append(f"- **Average per Day:** {stats['avg_commits_per_day']:.1f} commits")
+            lines.append(f"- **Average per Active Day:** {stats['avg_commits_per_active_day']:.1f} commits")
+            lines.append("")
+            
+            # Timeline
+            lines.append("## ⏰ Timeline")
+            lines.append(f"- **First Commit:** {stats['first_commit'].commit.author.date.strftime('%Y-%m-%d %H:%M UTC')}")
+            lines.append(f"- **Latest Commit:** {stats['last_commit'].commit.author.date.strftime('%Y-%m-%d %H:%M UTC')}")
+            if stats['busiest_date']:
+                lines.append(f"- **🔥 Busiest Day:** {stats['busiest_date'].strftime('%Y-%m-%d')} ({stats['busiest_date_commits']} commits)")
+            lines.append("")
+            
+            # Activity Streaks
+            streaks = stats['consecutive_days']
+            lines.append("## 🔥 Activity Streaks")
+            lines.append(f"- **Longest Streak:** {streaks['longest_streak']} consecutive days")
+            if streaks['current_streak'] > 0:
+                lines.append(f"- **Current Streak:** {streaks['current_streak']} days 🚀")
+            else:
+                lines.append("- **Current Streak:** 0 days")
+            lines.append("")
+            
+            # Work Hours
+            lines.append("## ⏰ Work Hours Analysis")
+            hours_display = self._format_hours_display(stats['total_work_hours'])
+            lines.append(f"- **Total Work Hours:** {hours_display}")
+            lines.append(f"- **Work Sessions:** {stats['work_blocks_count']} coding blocks")
+            if stats['active_days'] > 0:
+                avg_hours_per_day = stats['total_work_hours'] / stats['active_days']
+                lines.append(f"- **Average per Active Day:** {self._format_hours_display(avg_hours_per_day)}")
+            lines.append("")
+            
+            # Code Changes
+            lines.append("## 💻 Code Changes")
+            lines.append(f"- **Files Modified:** {stats['total_files_changed']:,}")
+            lines.append(f"- **Lines Added:** +{stats['total_additions']:,}")
+            lines.append(f"- **Lines Removed:** -{stats['total_deletions']:,}")
+            net_indicator = "📈" if stats['net_lines'] > 0 else "📉" if stats['net_lines'] < 0 else "⚖️"
+            lines.append(f"- **Net Change:** {stats['net_lines']:+,} lines {net_indicator}")
+            lines.append("")
+            
+            # File Types
+            if stats['file_types']:
+                lines.append("## 📁 File Types Touched")
+                sorted_types = sorted(stats['file_types'].items(), key=lambda x: x[1], reverse=True)
+                for ext, count in sorted_types[:10]:  # Show top 10
+                    lines.append(f"- **.{ext}:** {count} files")
+                lines.append("")
+            
+            # Productivity Patterns
+            rhythm = stats['rhythm_data']
+            if rhythm:
+                lines.append("## 🎯 Productivity Patterns")
+                peak_hour, peak_commits = rhythm['peak_hour']
+                peak_day, peak_day_commits = rhythm['peak_day']
+                lines.append(f"- **Peak Hour:** {peak_hour:02d}:00 ({peak_commits} commits)")
+                lines.append(f"- **Peak Day:** {peak_day} ({peak_day_commits} commits)")
+                lines.append(f"- **Work Span:** {rhythm['earliest_hour']:02d}:00 - {rhythm['latest_hour']:02d}:00")
+                lines.append("")
+            
+            # Weekly/Monthly Patterns
+            if stats.get('weekly_stats'):
+                weekly = stats['weekly_stats']
+                lines.append("## 📊 Weekly & Monthly Patterns")
+                lines.append(f"- **Weeks Analyzed:** {weekly['total_weeks']}")
+                lines.append(f"- **Avg Commits/Week:** {weekly['avg_commits_per_week']:.1f}")
+                lines.append(f"- **Most Productive Week:** {weekly['most_productive_week'].strftime('%Y-%m-%d')} ({weekly['most_productive_week_commits']} commits)")
+                
+                if stats.get('monthly_stats'):
+                    monthly = stats['monthly_stats']
+                    month_name = datetime(monthly['most_productive_month'][0], monthly['most_productive_month'][1], 1).strftime('%B %Y')
+                    lines.append(f"- **Most Productive Month:** {month_name} ({monthly['most_productive_month_commits']} commits)")
+                lines.append("")
+            
+            # Commit Message Insights
+            lines.append("## 💬 Commit Message Insights")
+            lines.append(f"- **Average Length:** {stats['avg_message_length']:.0f} characters")
+            lines.append(f"- **Longest Message:** {len(stats['longest_message'])} characters")
+            lines.append(f"- **Shortest Message:** {len(stats['shortest_message'])} characters")
+            lines.append("")
+            
+        else:
+            # Text format
+            lines.append("📊 REPOSITORY STATISTICS DASHBOARD")
+            lines.append("=" * 50)
+            lines.append("")
+            
+            # Repository Overview
+            lines.append("🏠 Repository Overview:")
+            lines.append(f"  Name: {stats['repo_name']}")
+            if stats.get('repo_description'):
+                lines.append(f"  Description: {stats['repo_description']}")
+            if stats.get('repo_language'):
+                lines.append(f"  Primary Language: {stats['repo_language']}")
+            lines.append(f"  ⭐ Stars: {stats.get('repo_stars', 0):,}")
+            lines.append(f"  🔀 Forks: {stats.get('repo_forks', 0):,}")
+            
+            if stats.get('repo_created'):
+                repo_age = f" ({stats['repo_age_days']:,} days old)" if stats.get('repo_age_days') else ""
+                lines.append(f"  🎂 Created: {stats['repo_created'].strftime('%Y-%m-%d')}{repo_age}")
+            
+            lines.append("")
+            
+            # Analysis Period Summary
+            lines.append("📅 Analysis Period:")
+            start_date, end_date = stats['analysis_period']
+            lines.append(f"  Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+            lines.append(f"  Duration: {stats['analysis_span_days']} days")
+            lines.append(f"  Active Days: {stats['active_days']} days ({stats['activity_percentage']:.1f}% of period)")
+            lines.append("")
+            
+            # Commit Statistics
+            lines.append("📈 Commit Statistics:")
+            lines.append(f"  Total Commits: {stats['total_commits']:,}")
+            lines.append(f"  Contributors: {stats['unique_authors']}")
+            if len(stats['author_list']) <= 5:
+                lines.append(f"  Authors: {', '.join(stats['author_list'])}")
+            lines.append(f"  Average per Day: {stats['avg_commits_per_day']:.1f} commits")
+            lines.append(f"  Average per Active Day: {stats['avg_commits_per_active_day']:.1f} commits")
+            lines.append("")
+            
+            # Timeline
+            lines.append("⏰ Timeline:")
+            lines.append(f"  First Commit: {stats['first_commit'].commit.author.date.strftime('%Y-%m-%d %H:%M UTC')}")
+            lines.append(f"  Latest Commit: {stats['last_commit'].commit.author.date.strftime('%Y-%m-%d %H:%M UTC')}")
+            if stats['busiest_date']:
+                lines.append(f"  🔥 Busiest Day: {stats['busiest_date'].strftime('%Y-%m-%d')} ({stats['busiest_date_commits']} commits)")
+            lines.append("")
+            
+            # Activity Streaks
+            streaks = stats['consecutive_days']
+            lines.append("🔥 Activity Streaks:")
+            lines.append(f"  Longest Streak: {streaks['longest_streak']} consecutive days")
+            if streaks['current_streak'] > 0:
+                lines.append(f"  Current Streak: {streaks['current_streak']} days 🚀")
+            else:
+                lines.append("  Current Streak: 0 days")
+            lines.append("")
+            
+            # Work Hours
+            lines.append("⏰ Work Hours Analysis:")
+            hours_display = self._format_hours_display(stats['total_work_hours'])
+            lines.append(f"  Total Work Hours: {hours_display}")
+            lines.append(f"  Work Sessions: {stats['work_blocks_count']} coding blocks")
+            if stats['active_days'] > 0:
+                avg_hours_per_day = stats['total_work_hours'] / stats['active_days']
+                lines.append(f"  Average per Active Day: {self._format_hours_display(avg_hours_per_day)}")
+            lines.append("")
+            
+            # Code Changes
+            lines.append("💻 Code Changes:")
+            lines.append(f"  Files Modified: {stats['total_files_changed']:,}")
+            lines.append(f"  Lines Added: +{stats['total_additions']:,}")
+            lines.append(f"  Lines Removed: -{stats['total_deletions']:,}")
+            net_indicator = "📈" if stats['net_lines'] > 0 else "📉" if stats['net_lines'] < 0 else "⚖️"
+            lines.append(f"  Net Change: {stats['net_lines']:+,} lines {net_indicator}")
+            lines.append("")
+            
+            # File Types
+            if stats['file_types']:
+                lines.append("📁 File Types Touched:")
+                sorted_types = sorted(stats['file_types'].items(), key=lambda x: x[1], reverse=True)
+                for ext, count in sorted_types[:10]:  # Show top 10
+                    lines.append(f"  .{ext}: {count} files")
+                lines.append("")
+            
+            # Productivity Patterns
+            rhythm = stats['rhythm_data']
+            if rhythm:
+                lines.append("🎯 Productivity Patterns:")
+                peak_hour, peak_commits = rhythm['peak_hour']
+                peak_day, peak_day_commits = rhythm['peak_day']
+                lines.append(f"  Peak Hour: {peak_hour:02d}:00 ({peak_commits} commits)")
+                lines.append(f"  Peak Day: {peak_day} ({peak_day_commits} commits)")
+                lines.append(f"  Work Span: {rhythm['earliest_hour']:02d}:00 - {rhythm['latest_hour']:02d}:00")
+                lines.append("")
+            
+            # Weekly/Monthly Patterns
+            if stats.get('weekly_stats'):
+                weekly = stats['weekly_stats']
+                lines.append("📊 Weekly & Monthly Patterns:")
+                lines.append(f"  Weeks Analyzed: {weekly['total_weeks']}")
+                lines.append(f"  Avg Commits/Week: {weekly['avg_commits_per_week']:.1f}")
+                lines.append(f"  Most Productive Week: {weekly['most_productive_week'].strftime('%Y-%m-%d')} ({weekly['most_productive_week_commits']} commits)")
+                
+                if stats.get('monthly_stats'):
+                    monthly = stats['monthly_stats']
+                    month_name = datetime(monthly['most_productive_month'][0], monthly['most_productive_month'][1], 1).strftime('%B %Y')
+                    lines.append(f"  Most Productive Month: {month_name} ({monthly['most_productive_month_commits']} commits)")
+                lines.append("")
+            
+            # Commit Message Insights
+            lines.append("💬 Commit Message Insights:")
+            lines.append(f"  Average Length: {stats['avg_message_length']:.0f} characters")
+            lines.append(f"  Longest Message: {len(stats['longest_message'])} characters")
+            lines.append(f"  Shortest Message: {len(stats['shortest_message'])} characters")
+            lines.append("")
+        
+        # Fun facts and insights (same for both formats)
+        lines.append("🎉 Fun Facts & Insights:" if output_format.lower() != 'markdown' else "## 🎉 Fun Facts & Insights")
+        if output_format.lower() == 'markdown':
+            lines.append("")
+        
+        prefix = "- " if output_format.lower() == 'markdown' else "  • "
+        
+        # Calculate some fun statistics
+        if stats['total_commits'] > 100:
+            lines.append(f"{prefix}You're a commit machine! 🚀 {stats['total_commits']} commits is impressive!")
+        elif stats['total_commits'] > 50:
+            lines.append(f"{prefix}Solid progress with {stats['total_commits']} commits! 💪")
+        elif stats['total_commits'] > 10:
+            lines.append(f"{prefix}Great start with {stats['total_commits']} commits! 🌱")
+        
+        if stats['activity_percentage'] > 80:
+            lines.append(f"{prefix}You're incredibly consistent - active {stats['activity_percentage']:.0f}% of the time! 🎯")
+        elif stats['activity_percentage'] > 50:
+            lines.append(f"{prefix}Good consistency with {stats['activity_percentage']:.0f}% activity rate! 📈")
+        
+        if stats['net_lines'] > 1000:
+            lines.append(f"{prefix}You've added significant value with {stats['net_lines']:+,} net lines! 📊")
+        
+        streaks = stats['consecutive_days']
+        if streaks['longest_streak'] > 7:
+            lines.append(f"{prefix}Amazing dedication! Your {streaks['longest_streak']}-day streak shows real commitment! 🔥")
+        elif streaks['longest_streak'] > 3:
+            lines.append(f"{prefix}Nice momentum with a {streaks['longest_streak']}-day streak! 🌟")
+        
+        if stats['total_work_hours'] > 40:
+            lines.append(f"{prefix}Serious time investment: {self._format_hours_display(stats['total_work_hours'])} of coding! ⏰")
+        
+        return '\n'.join(lines)
+
 def validate_environment():
     """Validate that required environment variables are set."""
     github_token = os.getenv('GITHUB_TOKEN')
@@ -908,7 +1386,7 @@ def validate_environment():
 
 @click.group()
 def cli():
-    """GitHub Auditing Tool - Generate changelists, calculate work hours, and create development timelines."""
+    """GitHub Auditing Tool - Generate changelists, calculate work hours, analyze coding patterns, create development timelines, and generate comprehensive repository statistics."""
     pass
 
 @cli.command()
@@ -1098,30 +1576,51 @@ def hours(repository, date, author, output, format, save):
             click.echo(f"\n{Fore.GREEN}📊 Total estimated hours worked: {total_hours_display}{Style.RESET_ALL}")
             
         else:
-            # Single day analysis (existing logic)
-            click.echo(f"\n{Fore.GREEN}{'='*50}")
-            click.echo(f"WORK HOURS FOR {date_display.upper()}")
-            click.echo(f"{'='*50}{Style.RESET_ALL}\n")
+            # Single day analysis
+            if output_format.lower() == 'markdown':
+                lines.append(f"## Summary")
+                lines.append(f"- **Total commits:** {len(commits)}")
+                lines.append(f"- **First commit:** {first_commit.strftime('%H:%M:%S UTC')}")
+                lines.append(f"- **Last commit:** {last_commit.strftime('%H:%M:%S UTC')}")
+                lines.append("")
+                lines.append("## Commit Summary")
+                lines.append("")
+            else:
+                lines.append(f"Total commits: {len(commits)}")
+                lines.append(f"First commit: {first_commit.strftime('%H:%M:%S UTC')}")
+                lines.append(f"Last commit:  {last_commit.strftime('%H:%M:%S UTC')}")
+                lines.append("")
+                lines.append("Commit Summary:")
             
-            click.echo(f"{Fore.CYAN}Total commits: {len(commits)}{Style.RESET_ALL}")
-            click.echo(f"{Fore.CYAN}First commit: {first_commit.strftime('%H:%M:%S UTC')}{Style.RESET_ALL}")
-            click.echo(f"{Fore.CYAN}Last commit:  {last_commit.strftime('%H:%M:%S UTC')}{Style.RESET_ALL}")
-            
-            # Show commit summary first (limit to last 20 commits for readability)
-            click.echo(f"\n{Fore.BLUE}Commit Summary:{Style.RESET_ALL}")
-            commits_to_show = commits[-20:]  # Show last 20 commits
+            # Show commit summary (limit to last 20 commits for readability)
+            commits_to_show = commits[-20:]
             start_index = len(commits) - len(commits_to_show) + 1
             
             if len(commits) > 20:
-                click.echo(f"  ... (showing last 20 of {len(commits)} commits)")
+                if output_format.lower() == 'markdown':
+                    lines.append("_(showing last 20 of {} commits)_".format(len(commits)))
+                else:
+                    lines.append(f"  ... (showing last 20 of {len(commits)} commits)")
             
             for i, commit in enumerate(commits_to_show, start_index):
                 timestamp = commit.commit.author.date.strftime('%H:%M')
                 message = commit.commit.message.split('\n')[0][:60]
-                click.echo(f"  {i:2d}. {timestamp} - {message}")
+                
+                if output_format.lower() == 'markdown':
+                    lines.append(f"{i}. **{timestamp}** - {message}")
+                else:
+                    lines.append(f"  {i:2d}. {timestamp} - {message}")
             
-            # Show work blocks analysis
-            click.echo(f"\n{Fore.BLUE}Work Blocks Analysis ({len(work_blocks)} blocks detected):{Style.RESET_ALL}")
+            lines.append("")
+            
+            # Work blocks analysis
+            if output_format.lower() == 'markdown':
+                lines.append(f"## Work Blocks Analysis")
+                lines.append(f"*{len(work_blocks)} blocks detected*")
+                lines.append("")
+            else:
+                lines.append(f"Work Blocks Analysis ({len(work_blocks)} blocks detected):")
+            
             for i, block in enumerate(work_blocks, 1):
                 start_time = block['start'].strftime('%H:%M')
                 end_time = block['end'].strftime('%H:%M')
@@ -1130,14 +1629,24 @@ def hours(repository, date, author, output, format, save):
                 hours_display = audit_tool._format_hours_display(hours)
                 
                 if start_time == end_time:
-                    # Single commit block
-                    click.echo(f"  Block {i}: {start_time} (isolated commit - {hours_display})")
+                    if output_format.lower() == 'markdown':
+                        lines.append(f"- **Block {i}:** {start_time} (isolated commit - {hours_display})")
+                    else:
+                        lines.append(f"  Block {i}: {start_time} (isolated commit - {hours_display})")
                 else:
-                    # Multi-commit block
-                    click.echo(f"  Block {i}: {start_time} - {end_time} ({hours_display}, {commit_count} commits)")
+                    if output_format.lower() == 'markdown':
+                        lines.append(f"- **Block {i}:** {start_time} - {end_time} ({hours_display}, {commit_count} commits)")
+                    else:
+                        lines.append(f"  Block {i}: {start_time} - {end_time} ({hours_display}, {commit_count} commits)")
             
+            lines.append("")
             total_hours_display = audit_tool._format_hours_display(total_hours)
-            click.echo(f"\n{Fore.GREEN}📊 Total estimated hours worked: {total_hours_display}{Style.RESET_ALL}")
+            
+            if output_format.lower() == 'markdown':
+                lines.append(f"## Total")
+                lines.append(f"**📊 Total estimated hours worked:** {total_hours_display}")
+            else:
+                lines.append(f"📊 Total estimated hours worked: {total_hours_display}")
         
         # Save to file if requested
         if output is not None:
@@ -1475,6 +1984,120 @@ def setup():
     
     click.echo(f"\n{Fore.GREEN}Configuration saved to .env file!{Style.RESET_ALL}")
     click.echo(f"{Fore.YELLOW}Make sure to add .env to your .gitignore file to keep your keys secure.{Style.RESET_ALL}")
+
+@cli.command()
+@click.argument('repository')
+@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: this month')
+@click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
+@click.option('--output', '-o', help='Output file to save the statistics report (auto-generates smart filename if not specified)')
+@click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
+              default='text', help='Output format: text (plain text) or markdown. Default: text')
+@click.option('--save', is_flag=True, help='Save to auto-generated filename')
+def stats(repository, date, author, output, format, save):
+    """Generate comprehensive repository statistics and insights.
+    
+    Provides a detailed dashboard of repository metrics including commit patterns,
+    work hours, activity streaks, file changes, and productivity insights.
+    """
+    
+    # Validate environment
+    validation_result = validate_environment()
+    if not validation_result:
+        sys.exit(1)
+    
+    _, github_token, openai_api_key = validation_result
+    
+    # Default to current month if no date specified
+    if not date:
+        date = 'this-month'
+    
+    try:
+        # Initialize the tool
+        audit_tool = GitHubAuditTool(github_token, openai_api_key)
+        
+        # Parse date range
+        start_date, end_date = audit_tool.parse_date_range(date)
+        
+        # Format date range for display
+        if start_date.date() == end_date.date():
+            date_display = start_date.strftime('%Y-%m-%d')
+        else:
+            date_display = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+        
+        # Get repository
+        click.echo(f"{Fore.BLUE}Analyzing repository: {repository}{Style.RESET_ALL}")
+        repo = audit_tool.get_repository(repository)
+        
+        # Get commits for the date range
+        click.echo(f"{Fore.BLUE}Getting commits for {date_display}...{Style.RESET_ALL}")
+        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author)
+        
+        if not commits:
+            click.echo(f"{Fore.YELLOW}No commits found for {date_display}{Style.RESET_ALL}")
+            return
+        
+        # Analyze comprehensive statistics
+        click.echo(f"{Fore.BLUE}Analyzing repository statistics...{Style.RESET_ALL}")
+        stats_data = audit_tool.analyze_repository_stats(repo, commits, start_date, end_date)
+        
+        # Display results
+        click.echo(f"\n{Fore.GREEN}{'='*60}")
+        click.echo(f"REPOSITORY STATISTICS FOR {date_display.upper()}")
+        click.echo(f"{'='*60}{Style.RESET_ALL}\n")
+        
+        # Basic summary for console
+        click.echo(f"{Fore.CYAN}📊 Quick Summary:{Style.RESET_ALL}")
+        click.echo(f"  Repository: {stats_data['repo_name']}")
+        click.echo(f"  Total Commits: {stats_data['total_commits']:,}")
+        click.echo(f"  Active Days: {stats_data['active_days']} ({stats_data['activity_percentage']:.1f}% of period)")
+        click.echo(f"  Work Hours: {audit_tool._format_hours_display(stats_data['total_work_hours'])}")
+        
+        if stats_data['busiest_date']:
+            click.echo(f"  🔥 Busiest Day: {stats_data['busiest_date'].strftime('%Y-%m-%d')} ({stats_data['busiest_date_commits']} commits)")
+        
+        streaks = stats_data['consecutive_days']
+        if streaks['current_streak'] > 0:
+            click.echo(f"  🚀 Current Streak: {streaks['current_streak']} days")
+        else:
+            click.echo(f"  📈 Longest Streak: {streaks['longest_streak']} days")
+        
+        click.echo(f"  💻 Code Changes: {stats_data['net_lines']:+,} net lines")
+        
+        # Show top file types
+        if stats_data['file_types']:
+            top_types = sorted(stats_data['file_types'].items(), key=lambda x: x[1], reverse=True)[:3]
+            types_str = ', '.join([f".{ext} ({count})" for ext, count in top_types])
+            click.echo(f"  📁 Top File Types: {types_str}")
+        
+        # Productivity insights
+        rhythm = stats_data['rhythm_data']
+        if rhythm:
+            peak_hour, peak_commits = rhythm['peak_hour']
+            peak_day, peak_day_commits = rhythm['peak_day']
+            click.echo(f"  🎯 Peak Activity: {peak_day} at {peak_hour:02d}:00")
+        
+        click.echo(f"\n{Fore.BLUE}💡 Use --save or --output to get the full detailed report!{Style.RESET_ALL}")
+        
+        # Save to file if requested
+        if output is not None:
+            # Custom filename provided
+            report_content = audit_tool.format_stats_report(stats_data, date_display, format)
+            report_title = f"REPOSITORY STATISTICS FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(report_content, output, report_title)
+            click.echo(f"\n{Fore.GREEN}Statistics report saved to: {output}{Style.RESET_ALL}")
+        elif save:
+            # Auto-generate filename when --save flag is used
+            output_filename = audit_tool.generate_smart_filename(date, start_date, end_date, 'stats', repository, author, audit_tool.user.login, format)
+            click.echo(f"{Fore.CYAN}Auto-generated filename: {output_filename}{Style.RESET_ALL}")
+            
+            report_content = audit_tool.format_stats_report(stats_data, date_display, format)
+            report_title = f"REPOSITORY STATISTICS FOR {date_display.upper()} ({format.upper()} FORMAT)"
+            audit_tool.save_report_to_file(report_content, output_filename, report_title)
+            click.echo(f"\n{Fore.GREEN}Statistics report saved to: {output_filename}{Style.RESET_ALL}")
+        
+    except Exception as e:
+        click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     cli() 
