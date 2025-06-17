@@ -42,17 +42,51 @@ class GitHubAuditTool:
         except Exception as e:
             raise Exception(f"Failed to initialize OpenAI client: {e}")
         
+    def _normalize_repo_name(self, repo_input: str) -> str:
+        """Normalize various repository input formats to owner/repo format."""
+        repo_name = repo_input.strip()
+        
+        # Remove common URL prefixes
+        prefixes_to_remove = [
+            'https://github.com/',
+            'http://github.com/',
+            'git@github.com:',
+            'github.com/',
+            'www.github.com/'
+        ]
+        
+        for prefix in prefixes_to_remove:
+            if repo_name.lower().startswith(prefix.lower()):
+                repo_name = repo_name[len(prefix):]
+                break
+        
+        # Remove .git suffix if present
+        if repo_name.lower().endswith('.git'):
+            repo_name = repo_name[:-4]
+        
+        # Remove trailing slash if present
+        repo_name = repo_name.rstrip('/')
+        
+        return repo_name
+    
     def get_repository(self, repo_name: str):
         """Get a GitHub repository object."""
+        # Normalize the repository name to handle various URL formats
+        normalized_name = self._normalize_repo_name(repo_name)
+        
+        # Show feedback if the name was normalized
+        if normalized_name != repo_name:
+            click.echo(f"{Fore.CYAN}Normalized repository name: {normalized_name}{Style.RESET_ALL}")
+        
         try:
             # Try user's repository first
-            return self.user.get_repo(repo_name)
+            return self.user.get_repo(normalized_name)
         except GithubException:
             # Try organization repository
             try:
-                return self.github.get_repo(repo_name)
+                return self.github.get_repo(normalized_name)
             except GithubException as e:
-                raise Exception(f"Repository '{repo_name}' not found: {e}")
+                raise Exception(f"Repository '{normalized_name}' not found: {e}")
     
     def parse_date_range(self, date_input: str) -> Tuple[datetime, datetime]:
         """Parse date input which can be a single date or date range."""
@@ -123,8 +157,8 @@ class GitHubAuditTool:
         
         return start_date, end_date
     
-    def get_commits_for_date_range(self, repo, start_date: datetime, end_date: datetime, author: Optional[str] = None) -> List:
-        """Get all commits for a date range."""
+    def get_commits_for_date_range(self, repo, start_date: datetime, end_date: datetime, author: Optional[str] = None, min_commit_sha: Optional[str] = None, max_commit_sha: Optional[str] = None) -> List:
+        """Get all commits for a date range, optionally limited to a range between min_commit_sha and max_commit_sha."""
         commits = []
         
         try:
@@ -135,15 +169,38 @@ class GitHubAuditTool:
                 author=author or self.user.login
             )
             
+            # Collect all commits first
             for commit in repo_commits:
                 commits.append(commit)
-                
+            
+            # Sort commits chronologically (oldest first)
+            commits = sorted(commits, key=lambda c: c.commit.author.date)
+            
+            # Find the range if min_commit_sha or max_commit_sha is specified
+            start_index = 0
+            end_index = len(commits)
+            
+            if min_commit_sha:
+                for i, commit in enumerate(commits):
+                    if commit.sha.startswith(min_commit_sha):
+                        start_index = i
+                        break
+            
+            if max_commit_sha:
+                for i, commit in enumerate(commits):
+                    if commit.sha.startswith(max_commit_sha):
+                        end_index = i + 1  # Include the max commit
+                        break
+            
+            # Return the specified range
+            commits = commits[start_index:end_index]
+                        
         except GithubException as e:
             click.echo(f"{Fore.YELLOW}Warning: {e}{Style.RESET_ALL}")
         
         return commits
     
-    def get_commits_for_date(self, repo, target_date: datetime, author: Optional[str] = None) -> List:
+    def get_commits_for_date(self, repo, target_date: datetime, author: Optional[str] = None, min_commit_sha: Optional[str] = None, max_commit_sha: Optional[str] = None) -> List:
         """Get all commits for a specific date (legacy method for backwards compatibility)."""
         # Set timezone to UTC if not specified
         if target_date.tzinfo is None:
@@ -153,7 +210,7 @@ class GitHubAuditTool:
         start_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
         end_date = start_date + timedelta(days=1)
         
-        return self.get_commits_for_date_range(repo, start_date, end_date, author)
+        return self.get_commits_for_date_range(repo, start_date, end_date, author, min_commit_sha, max_commit_sha)
     
     def analyze_coding_rhythm(self, commits: List) -> Dict:
         """Analyze coding patterns throughout the day and week."""
@@ -530,8 +587,9 @@ Please provide a comprehensive development timeline:
         # Determine file extension based on format
         extension = 'md' if file_format.lower() == 'markdown' else 'txt'
         
-        # Clean repository name (replace slashes with underscores)
-        repo_part = repository_name.replace('/', '_')
+        # Normalize and clean repository name (replace slashes and remove URL parts)
+        normalized_repo = self._normalize_repo_name(repository_name)
+        repo_part = normalized_repo.replace('/', '_')
         
         # Determine if we should include author in filename
         # Only include if author is specified and different from authenticated user
@@ -1386,7 +1444,7 @@ def validate_environment():
 
 @click.group()
 def cli():
-    """GitHub Auditing Tool - Generate changelists, calculate work hours, analyze coding patterns, create development timelines, and generate comprehensive repository statistics."""
+    """GitHub Auditing Tool - Generate changelists, calculate work hours, analyze coding patterns, create development timelines, generate comprehensive repository statistics, and view commit information."""
     pass
 
 @cli.command()
@@ -1399,7 +1457,9 @@ def cli():
 @click.option('--verbose', '-v', is_flag=True, help='Include full diffs (may use more tokens). Default: commit messages only')
 @click.option('--display-only', is_flag=True, help='Display output only (do not save to file) - saves AI tokens')
 @click.option('--voice', help='Specify the tone/voice for the report (e.g., "friendly and upbeat", "formal and concise", "enthusiastic")')
-def changelist(repository, date, author, output, format, verbose, display_only, voice):
+@click.option('--min-commit', help='Start analysis from this commit SHA (earliest commit to include)')
+@click.option('--max-commit', help='Stop analysis at this commit SHA (latest commit to include)')
+def changelist(repository, date, author, output, format, verbose, display_only, voice, min_commit, max_commit):
     """Generate an AI-powered changelist for a specific date or date range.
     
     By default, saves to an auto-generated markdown file to prevent wasting AI tokens.
@@ -1432,13 +1492,20 @@ def changelist(repository, date, author, output, format, verbose, display_only, 
         
         # Get commits for the date range
         click.echo(f"{Fore.BLUE}Getting commits for {date_display}...{Style.RESET_ALL}")
-        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author)
+        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author, min_commit, max_commit)
         
         if not commits:
             click.echo(f"{Fore.YELLOW}No commits found for {date_display}{Style.RESET_ALL}")
             return
         
-        click.echo(f"{Fore.GREEN}Found {len(commits)} commits{Style.RESET_ALL}")
+        if min_commit and max_commit:
+            click.echo(f"{Fore.GREEN}Found {len(commits)} commits (range: {min_commit[:8]} to {max_commit[:8]}){Style.RESET_ALL}")
+        elif min_commit:
+            click.echo(f"{Fore.GREEN}Found {len(commits)} commits (starting from commit {min_commit[:8]}){Style.RESET_ALL}")
+        elif max_commit:
+            click.echo(f"{Fore.GREEN}Found {len(commits)} commits (stopped at commit {max_commit[:8]}){Style.RESET_ALL}")
+        else:
+            click.echo(f"{Fore.GREEN}Found {len(commits)} commits{Style.RESET_ALL}")
         
         # Get commit data based on verbose flag
         if verbose:
@@ -1507,7 +1574,9 @@ def changelist(repository, date, author, output, format, verbose, display_only, 
 @click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
               default='text', help='Output format: text (plain text) or markdown. Default: text')
 @click.option('--save', is_flag=True, help='Save to auto-generated filename')
-def hours(repository, date, author, output, format, save):
+@click.option('--min-commit', help='Start analysis from this commit SHA (earliest commit to include)')
+@click.option('--max-commit', help='Stop analysis at this commit SHA (latest commit to include)')
+def hours(repository, date, author, output, format, save, min_commit, max_commit):
     """Calculate work hours for a specific date or date range."""
     
     # Validate environment
@@ -1536,7 +1605,7 @@ def hours(repository, date, author, output, format, save):
         
         # Get commits for the date range
         click.echo(f"{Fore.BLUE}Getting commits for {date_display}...{Style.RESET_ALL}")
-        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author)
+        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author, min_commit, max_commit)
         
         if not commits:
             click.echo(f"{Fore.YELLOW}No commits found for {date_display}{Style.RESET_ALL}")
@@ -1677,7 +1746,9 @@ def hours(repository, date, author, output, format, save):
 @click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
               default='text', help='Output format: text (plain text) or markdown. Default: text')
 @click.option('--save', is_flag=True, help='Save to auto-generated filename')
-def rhythm(repository, date, author, output, format, save):
+@click.option('--min-commit', help='Start analysis from this commit SHA (earliest commit to include)')
+@click.option('--max-commit', help='Stop analysis at this commit SHA (latest commit to include)')
+def rhythm(repository, date, author, output, format, save, min_commit, max_commit):
     """Analyze coding rhythm and patterns for a date range."""
     
     # Validate environment
@@ -1710,7 +1781,7 @@ def rhythm(repository, date, author, output, format, save):
         
         # Get commits for the date range
         click.echo(f"{Fore.BLUE}Getting commits for {date_display}...{Style.RESET_ALL}")
-        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author)
+        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author, min_commit, max_commit)
         
         if not commits:
             click.echo(f"{Fore.YELLOW}No commits found for {date_display}{Style.RESET_ALL}")
@@ -1839,7 +1910,9 @@ def rhythm(repository, date, author, output, format, save):
 @click.option('--verbose', '-v', is_flag=True, help='Include full diffs (may use more tokens). Default: commit messages only')
 @click.option('--display-only', is_flag=True, help='Display output only (do not save to file) - saves AI tokens')
 @click.option('--voice', help='Specify the tone/voice for the timeline (e.g., "narrative storytelling", "technical documentation", "executive summary")')
-def timeline(repository, date, author, output, format, verbose, display_only, voice):
+@click.option('--min-commit', help='Start analysis from this commit SHA (earliest commit to include)')
+@click.option('--max-commit', help='Stop analysis at this commit SHA (latest commit to include)')
+def timeline(repository, date, author, output, format, verbose, display_only, voice, min_commit, max_commit):
     """Generate an AI-powered development timeline showing chronological project evolution.
     
     By default, saves to an auto-generated markdown file to prevent wasting AI tokens.
@@ -1876,13 +1949,20 @@ def timeline(repository, date, author, output, format, verbose, display_only, vo
         
         # Get commits for the date range
         click.echo(f"{Fore.BLUE}Getting commits for {date_display}...{Style.RESET_ALL}")
-        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author)
+        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author, min_commit, max_commit)
         
         if not commits:
             click.echo(f"{Fore.YELLOW}No commits found for {date_display}{Style.RESET_ALL}")
             return
         
-        click.echo(f"{Fore.GREEN}Found {len(commits)} commits{Style.RESET_ALL}")
+        if min_commit and max_commit:
+            click.echo(f"{Fore.GREEN}Found {len(commits)} commits (range: {min_commit[:8]} to {max_commit[:8]}){Style.RESET_ALL}")
+        elif min_commit:
+            click.echo(f"{Fore.GREEN}Found {len(commits)} commits (starting from commit {min_commit[:8]}){Style.RESET_ALL}")
+        elif max_commit:
+            click.echo(f"{Fore.GREEN}Found {len(commits)} commits (stopped at commit {max_commit[:8]}){Style.RESET_ALL}")
+        else:
+            click.echo(f"{Fore.GREEN}Found {len(commits)} commits{Style.RESET_ALL}")
         
         # Sort commits chronologically (oldest first) for timeline
         commits = sorted(commits, key=lambda c: c.commit.author.date)
@@ -1947,45 +2027,6 @@ def timeline(repository, date, author, output, format, verbose, display_only, vo
         sys.exit(1)
 
 @cli.command()
-def setup():
-    """Setup GitHub and OpenAI API credentials."""
-    click.echo(f"{Fore.BLUE}GitHub Auditing Tool Setup{Style.RESET_ALL}")
-    click.echo("This will help you configure your API credentials.\n")
-    
-    # Check if .env file exists
-    env_file = ".env"
-    env_vars = {}
-    
-    if os.path.exists(env_file):
-        click.echo(f"{Fore.YELLOW}Found existing .env file. Current values will be shown.{Style.RESET_ALL}\n")
-        with open(env_file, 'r') as f:
-            for line in f:
-                if '=' in line and not line.strip().startswith('#'):
-                    key, value = line.strip().split('=', 1)
-                    env_vars[key] = value
-    
-    # GitHub Token
-    current_github = env_vars.get('GITHUB_TOKEN', '')
-    if current_github:
-        click.echo(f"Current GitHub token: {current_github[:8]}...")
-    github_token = click.prompt('GitHub Personal Access Token', default=current_github, hide_input=True)
-    
-    # OpenAI API Key
-    current_openai = env_vars.get('OPENAI_API_KEY', '')
-    if current_openai:
-        click.echo(f"Current OpenAI key: {current_openai[:8]}...")
-    openai_key = click.prompt('OpenAI API Key', default=current_openai, hide_input=True)
-    
-    # Write to .env file
-    with open(env_file, 'w') as f:
-        f.write(f"# GitHub Auditing Tool Configuration\n")
-        f.write(f"GITHUB_TOKEN={github_token}\n")
-        f.write(f"OPENAI_API_KEY={openai_key}\n")
-    
-    click.echo(f"\n{Fore.GREEN}Configuration saved to .env file!{Style.RESET_ALL}")
-    click.echo(f"{Fore.YELLOW}Make sure to add .env to your .gitignore file to keep your keys secure.{Style.RESET_ALL}")
-
-@cli.command()
 @click.argument('repository')
 @click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: this month')
 @click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
@@ -1993,7 +2034,9 @@ def setup():
 @click.option('--format', '-f', type=click.Choice(['text', 'markdown'], case_sensitive=False), 
               default='text', help='Output format: text (plain text) or markdown. Default: text')
 @click.option('--save', is_flag=True, help='Save to auto-generated filename')
-def stats(repository, date, author, output, format, save):
+@click.option('--min-commit', help='Start analysis from this commit SHA (earliest commit to include)')
+@click.option('--max-commit', help='Stop analysis at this commit SHA (latest commit to include)')
+def stats(repository, date, author, output, format, save, min_commit, max_commit):
     """Generate comprehensive repository statistics and insights.
     
     Provides a detailed dashboard of repository metrics including commit patterns,
@@ -2030,7 +2073,7 @@ def stats(repository, date, author, output, format, save):
         
         # Get commits for the date range
         click.echo(f"{Fore.BLUE}Getting commits for {date_display}...{Style.RESET_ALL}")
-        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author)
+        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author, min_commit, max_commit)
         
         if not commits:
             click.echo(f"{Fore.YELLOW}No commits found for {date_display}{Style.RESET_ALL}")
@@ -2098,6 +2141,141 @@ def stats(repository, date, author, output, format, save):
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
+
+@cli.command()
+@click.argument('repository')
+@click.option('--date', '-d', help='Date/range to analyze (YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or keywords: today, yesterday, week, month, all, etc.). Default: today')
+@click.option('--author', '-a', help='Specific author to filter commits. Default: authenticated user')
+@click.option('--min-commit', help='Start display from this commit SHA (earliest commit to show)')
+@click.option('--max-commit', help='Stop display at this commit SHA (latest commit to show)')
+def info(repository, date, author, min_commit, max_commit):
+    """Display commit information in a table format to help identify commit SHAs for analysis.
+    
+    Shows commits with their SHAs, timestamps, and truncated commit messages.
+    Use this to identify which commit SHAs to use with --min-commit and --max-commit in other commands.
+    """
+    
+    # Validate environment
+    validation_result = validate_environment()
+    if not validation_result:
+        sys.exit(1)
+    
+    _, github_token, openai_api_key = validation_result
+    
+    try:
+        # Initialize the tool
+        audit_tool = GitHubAuditTool(github_token, openai_api_key)
+        
+        # Parse date range
+        start_date, end_date = audit_tool.parse_date_range(date)
+        
+        # Format date range for display
+        if start_date.date() == end_date.date():
+            date_display = start_date.strftime('%Y-%m-%d')
+        else:
+            date_display = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+        
+        # Get repository
+        click.echo(f"{Fore.BLUE}Analyzing repository: {repository}{Style.RESET_ALL}")
+        repo = audit_tool.get_repository(repository)
+        
+        # Get commits for the date range
+        click.echo(f"{Fore.BLUE}Getting commits for {date_display}...{Style.RESET_ALL}")
+        commits = audit_tool.get_commits_for_date_range(repo, start_date, end_date, author, min_commit, max_commit)
+        
+        if not commits:
+            click.echo(f"{Fore.YELLOW}No commits found for {date_display}{Style.RESET_ALL}")
+            return
+        
+        # Sort commits chronologically (oldest first) to match how min/max commits work
+        sorted_commits = sorted(commits, key=lambda c: c.commit.author.date)
+        
+        # Display header
+        click.echo(f"\n{Fore.GREEN}{'='*90}")
+        click.echo(f"COMMIT INFORMATION FOR {date_display.upper()}")
+        if min_commit and max_commit:
+            click.echo(f"Showing commits from {min_commit[:8]} to {max_commit[:8]} ({len(sorted_commits)} commits)")
+        elif min_commit:
+            click.echo(f"Showing commits from {min_commit[:8]} onwards ({len(sorted_commits)} commits)")
+        elif max_commit:
+            click.echo(f"Showing commits up to {max_commit[:8]} ({len(sorted_commits)} commits)")
+        else:
+            click.echo(f"Showing all {len(sorted_commits)} commits")
+        click.echo(f"{'='*90}{Style.RESET_ALL}\n")
+        
+        # Table header
+        click.echo(f"{Fore.CYAN}{'Commit SHA':<10} {'Date':<10} {'Time':<8} {'Commit Message':<50}{Style.RESET_ALL}")
+        click.echo(f"{'-'*10} {'-'*10} {'-'*8} {'-'*50}")
+        
+        # Display each commit
+        for i, commit in enumerate(sorted_commits, 1):
+            commit_date = commit.commit.author.date
+            date_str = commit_date.strftime('%Y-%m-%d')
+            time_str = commit_date.strftime('%H:%M:%S')
+            commit_sha = commit.sha[:8]
+            
+            # Get first line of commit message and truncate to 50 characters
+            message = commit.commit.message.split('\n')[0]
+            if len(message) > 47:
+                message = message[:47] + "..."
+            
+            # Color alternate rows for readability
+            color = Fore.WHITE if i % 2 == 0 else Fore.LIGHTBLACK_EX
+            click.echo(f"{color}{commit_sha:<10} {date_str:<10} {time_str:<8} {message:<50}{Style.RESET_ALL}")
+        
+        # Footer with usage hints
+        click.echo(f"\n{Fore.BLUE}💡 Usage tips:{Style.RESET_ALL}")
+        click.echo(f"  • Use --min-commit <SHA> to start analysis from a specific commit")
+        click.echo(f"  • Use --max-commit <SHA> to stop analysis at a specific commit")
+        click.echo(f"  • Use both to analyze a specific range of commits")
+        click.echo(f"  • Commits are ordered chronologically (oldest first)")
+        if len(sorted_commits) >= 2:
+            click.echo(f"  • Example range: python github_audit_tool.py changelist {repository} --min-commit {sorted_commits[0].sha[:8]} --max-commit {sorted_commits[-1].sha[:8]}")
+        elif len(sorted_commits) == 1:
+            click.echo(f"  • Example: python github_audit_tool.py changelist {repository} --max-commit {sorted_commits[0].sha[:8]}")
+        
+    except Exception as e:
+        click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
+@cli.command()
+def setup():
+    """Setup GitHub and OpenAI API credentials."""
+    click.echo(f"{Fore.BLUE}GitHub Auditing Tool Setup{Style.RESET_ALL}")
+    click.echo("This will help you configure your API credentials.\n")
+    
+    # Check if .env file exists
+    env_file = ".env"
+    env_vars = {}
+    
+    if os.path.exists(env_file):
+        click.echo(f"{Fore.YELLOW}Found existing .env file. Current values will be shown.{Style.RESET_ALL}\n")
+        with open(env_file, 'r') as f:
+            for line in f:
+                if '=' in line and not line.strip().startswith('#'):
+                    key, value = line.strip().split('=', 1)
+                    env_vars[key] = value
+    
+    # GitHub Token
+    current_github = env_vars.get('GITHUB_TOKEN', '')
+    if current_github:
+        click.echo(f"Current GitHub token: {current_github[:8]}...")
+    github_token = click.prompt('GitHub Personal Access Token', default=current_github, hide_input=True)
+    
+    # OpenAI API Key
+    current_openai = env_vars.get('OPENAI_API_KEY', '')
+    if current_openai:
+        click.echo(f"Current OpenAI key: {current_openai[:8]}...")
+    openai_key = click.prompt('OpenAI API Key', default=current_openai, hide_input=True)
+    
+    # Write to .env file
+    with open(env_file, 'w') as f:
+        f.write(f"# GitHub Auditing Tool Configuration\n")
+        f.write(f"GITHUB_TOKEN={github_token}\n")
+        f.write(f"OPENAI_API_KEY={openai_key}\n")
+    
+    click.echo(f"\n{Fore.GREEN}Configuration saved to .env file!{Style.RESET_ALL}")
+    click.echo(f"{Fore.YELLOW}Make sure to add .env to your .gitignore file to keep your keys secure.{Style.RESET_ALL}")
 
 if __name__ == '__main__':
     cli() 
